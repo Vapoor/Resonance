@@ -5,156 +5,176 @@ using System.Collections.Generic;
 public class Wall : MonoBehaviour
 {
     [Header("Key Configuration")]
-    [Tooltip("The key(s) that are expected for this wall")]
+    [Tooltip("Expected key combination for this wall (e.g., single key or combo like Q+S)")]
     [SerializeField] private List<string> expectedKeys = new List<string>();
     
     [Header("Key Matching Mode")]
     [SerializeField] private KeyMatchMode matchMode = KeyMatchMode.Any;
     
     [Header("References")]
-    [SerializeField] private GameObject wallCube;
-    [SerializeField] private GameObject heatDistortionSphere;
+    [SerializeField] private GameObject wallVisual;
+    [SerializeField] private GameObject distortionVisual;
+    [SerializeField] private Material distortionMaterial;
+    
+    [Header("Cooldown System")]
+    [SerializeField] private float keyCooldown = 1f;
+    private float lastKeyPressTime = -999f;
+    
+    [Header("Distance to Speed Mapping")]
+    [SerializeField] private float speedAtDistance0 = 0f;    // Perfect
+    [SerializeField] private float speedAtDistance3 = 0.5f;  // Medium
+    [SerializeField] private float speedAtDistance6 = 1f;    // Maximum
+    
+    [Header("Shader Settings")]
+    [SerializeField] private string noiseSpeedPropertyName = "_NoiseSpeed";
     
     [Header("Visual Feedback")]
     [SerializeField] private Color correctKeyColor = Color.green;
     [SerializeField] private Color wrongKeyColor = Color.red;
-    [SerializeField] private Color defaultWallColor = Color.white;
-    [SerializeField] private Color inactiveWallColor = Color.gray;
+    [SerializeField] private Color inactiveColor = Color.gray;
     [SerializeField] private float feedbackDuration = 0.5f;
-    
-    [Header("Heat Distortion Settings")]
-    [SerializeField] private bool activateDistortionOnCorrectKey = true;
-    [SerializeField] private Material shaderGraphFXMaterial;
-    [SerializeField] private string noiseSpeedPropertyName = "_NoiseSpeed";
-    
-    [Header("Distance Penalty System")]
-    [SerializeField] private int maxDistanceForMaxSpeed = 6;  // Max distance on keyboard (half of 13)
-    [SerializeField] private AnimationCurve distanceSpeedCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
-    [SerializeField] private float perfectNoiseSpeed = 0f;
-    [SerializeField] private float maxNoiseSpeed = 1f;
-    [SerializeField] private bool useClosestExpectedKey = true;  // For multi-key walls
     
     [Header("Wall State")]
     [SerializeField] private bool isActive = false;
     [SerializeField] private bool isUnlocked = false;
     
-    [Header("Debug Info")]
-    [SerializeField] private bool showDistanceInfo = true;
+    [Header("Debug")]
+    [SerializeField] private bool showDebugInfo = true;
     
     [Header("Events")]
-    public UnityEvent<string> OnCorrectKeyPressed = new UnityEvent<string>();
-    public UnityEvent<string> OnWrongKeyPressed = new UnityEvent<string>();
     public UnityEvent OnWallUnlocked = new UnityEvent();
-    public UnityEvent OnWallActivated = new UnityEvent();
-    public UnityEvent OnWallDeactivated = new UnityEvent();
-    public UnityEvent<int> OnDistanceChanged = new UnityEvent<int>();
+    public UnityEvent<int> OnKeyDistanceCalculated = new UnityEvent<int>();
     
     // Private variables
     private Renderer wallRenderer;
-    private Renderer sphereRenderer;
-    private Material wallMaterial;
-    private Material sphereMaterial;
-    private KeyboardController keyboardController;
-    private List<string> pressedKeys = new List<string>();
+    private Renderer distortionRenderer;
+    private Color originalColor;
     private float feedbackTimer = 0f;
-    private Color originalWallColor;
-    
-    // Distance tracking
-    private int lastKeyDistance = 0;
+    private int lastDistance = 0;
     private float currentNoiseSpeed = 0f;
+    private KeyboardController keyboardController;
     
-    // Key position mapping (14 keys in order)
-    private static readonly List<string> keyOrder = new List<string>
+    // All 14 keys in physical order (what Unity detects - QWERTY layout)
+    private static readonly List<string> allKeys = new List<string>
     {
-        "VER", "Q", "S", "D", "F", "G", "H", "J", "K", "L", "M", "ù", "*", "ENTER"
+        "VER",    // 0 - Caps Lock
+        "Q",      // 1 - A key (shows Q on AZERTY)
+        "S",      // 2 - S key
+        "D",      // 3 - D key
+        "F",      // 4 - F key
+        "G",      // 5 - G key
+        "H",      // 6 - H key
+        "J",      // 7 - J key
+        "K",      // 8 - K key
+        "L",      // 9 - L key
+        "M",      // 10 - Semicolon (shows M on AZERTY)
+        "ù",      // 11 - Quote (shows ù on AZERTY)
+        "*",      // 12 - Backslash (shows * on AZERTY)
+        "ENTER"   // 13 - Return
     };
     
     public enum KeyMatchMode
     {
-        Any,
-        All,
-        Sequence,
-        Simultaneous
+        Any,            // Any single key from expected keys
+        All,            // All keys must be pressed (any order)
+        Simultaneous    // All keys pressed at the same time (combo)
     }
     
     private void Awake()
     {
-        // Find references if not assigned
-        if (wallCube == null)
+        SetupReferences();
+    }
+    
+    private void SetupReferences()
+    {
+        // Find wall visual
+        if (wallVisual == null)
         {
-            wallCube = transform.Find("Cube")?.gameObject;
-            if (wallCube == null && transform.childCount > 0)
+            Transform cubeTransform = transform.Find("Cube");
+            if (cubeTransform != null)
             {
-                wallCube = transform.GetChild(0).gameObject;
+                wallVisual = cubeTransform.gameObject;
             }
         }
         
-        if (heatDistortionSphere == null)
+        // Find or create distortion visual
+        if (distortionVisual == null)
         {
-            heatDistortionSphere = transform.Find("HeatDistortionSphere")?.gameObject;
-            if (heatDistortionSphere == null)
+            Transform distortionTransform = transform.Find("DistortionVisual");
+            if (distortionTransform != null)
             {
-                foreach (Transform child in transform.GetComponentsInChildren<Transform>())
-                {
-                    if (child.GetComponent<SphereCollider>() != null || child.name.Contains("Sphere"))
-                    {
-                        heatDistortionSphere = child.gameObject;
-                        break;
-                    }
-                }
+                distortionVisual = distortionTransform.gameObject;
+            }
+            else
+            {
+                // Create distortion duplicate if it doesn't exist
+                CreateDistortionDuplicate();
             }
         }
         
         // Get renderers
-        if (wallCube != null)
+        if (wallVisual != null)
         {
-            wallRenderer = wallCube.GetComponent<Renderer>();
+            wallRenderer = wallVisual.GetComponent<Renderer>();
             if (wallRenderer != null)
             {
-                wallMaterial = wallRenderer.material;
-                originalWallColor = wallMaterial.color;
+                originalColor = wallRenderer.material.color;
             }
         }
         
-        if (heatDistortionSphere != null)
+        if (distortionVisual != null)
         {
-            sphereRenderer = heatDistortionSphere.GetComponent<Renderer>();
-            if (sphereRenderer != null)
+            distortionRenderer = distortionVisual.GetComponent<Renderer>();
+            
+            // Apply distortion material
+            if (distortionMaterial != null && distortionRenderer != null)
             {
-                sphereMaterial = sphereRenderer.material;
-                
-                // If no shader graph material is assigned, try to use the sphere's material
-                if (shaderGraphFXMaterial == null)
-                {
-                    shaderGraphFXMaterial = sphereMaterial;
-                }
+                distortionRenderer.material = distortionMaterial;
             }
         }
     }
     
+    private void CreateDistortionDuplicate()
+    {
+        if (wallVisual == null) return;
+        
+        // Duplicate the wall visual
+        distortionVisual = Instantiate(wallVisual, transform);
+        distortionVisual.name = "DistortionVisual";
+        
+        // Position it slightly in front
+        distortionVisual.transform.localPosition = wallVisual.transform.localPosition + new Vector3(0, 0, -0.1f);
+        
+        // Apply distortion material
+        Renderer renderer = distortionVisual.GetComponent<Renderer>();
+        if (renderer != null && distortionMaterial != null)
+        {
+            renderer.material = distortionMaterial;
+        }
+        
+        distortionRenderer = renderer;
+        
+        Debug.Log($"[Wall] Created distortion duplicate for {gameObject.name}");
+    }
+    
     private void Start()
     {
-        // Find the keyboard controller
         keyboardController = FindObjectOfType<KeyboardController>();
         
-        if (keyboardController == null)
+        // Hide distortion visual initially
+        if (distortionVisual != null)
         {
-            Debug.LogWarning("[Wall] KeyboardController not found in scene!");
+            distortionVisual.SetActive(false);
         }
         
-        // Initialize heat distortion
-        if (heatDistortionSphere != null)
-        {
-            heatDistortionSphere.SetActive(false);
-        }
-        
-        // Initialize shader properties
-        UpdateNoiseSpeed();
-        
-        // Set initial visual state
+        // Set initial noise speed to 0
+        UpdateNoiseSpeed(0f);
         UpdateVisualState();
         
-        Debug.Log($"[Wall] {gameObject.name} initialized with {expectedKeys.Count} expected key(s): {string.Join(", ", expectedKeys)} | Active: {isActive}");
+        if (showDebugInfo)
+        {
+            Debug.Log($"[Wall] {gameObject.name} initialized | Keys: [{string.Join("+", expectedKeys)}] | Mode: {matchMode}");
+        }
     }
     
     private void Update()
@@ -177,28 +197,23 @@ public class Wall : MonoBehaviour
             return;
         }
         
-        bool isCorrectKey = false;
-        
-        switch (matchMode)
+        // Check cooldown
+        if (Time.time - lastKeyPressTime < keyCooldown)
         {
-            case KeyMatchMode.Any:
-                isCorrectKey = CheckAnyKeyMatch(keyName);
-                break;
-                
-            case KeyMatchMode.All:
-                isCorrectKey = CheckAllKeysMatch(keyName);
-                break;
-                
-            case KeyMatchMode.Sequence:
-                isCorrectKey = CheckSequenceMatch(keyName);
-                break;
-                
-            case KeyMatchMode.Simultaneous:
-                isCorrectKey = CheckSimultaneousMatch(keyName);
-                break;
+            if (showDebugInfo)
+            {
+                float remaining = keyCooldown - (Time.time - lastKeyPressTime);
+                Debug.Log($"[Wall] Cooldown active! Wait {remaining:F2}s");
+            }
+            return;
         }
         
-        if (isCorrectKey)
+        lastKeyPressTime = Time.time;
+        
+        // Check if key matches
+        bool isCorrect = CheckKeyMatch(keyName);
+        
+        if (isCorrect)
         {
             HandleCorrectKey(keyName);
         }
@@ -208,301 +223,224 @@ public class Wall : MonoBehaviour
         }
     }
     
-    private bool CheckAnyKeyMatch(string keyName)
+    private bool CheckKeyMatch(string keyName)
     {
-        return expectedKeys.Contains(keyName);
-    }
-    
-    private bool CheckAllKeysMatch(string keyName)
-    {
-        if (expectedKeys.Contains(keyName) && !pressedKeys.Contains(keyName))
+        switch (matchMode)
         {
-            pressedKeys.Add(keyName);
-            Debug.Log($"[Wall] {gameObject.name} - Key collected: {keyName} ({pressedKeys.Count}/{expectedKeys.Count})");
-        }
-        
-        if (pressedKeys.Count == expectedKeys.Count)
-        {
-            bool allMatch = true;
-            foreach (string key in expectedKeys)
-            {
-                if (!pressedKeys.Contains(key))
+            case KeyMatchMode.Any:
+                return expectedKeys.Contains(keyName);
+                
+            case KeyMatchMode.All:
+                // For simplicity, checking if the pressed key is one of the expected
+                return expectedKeys.Contains(keyName);
+                
+            case KeyMatchMode.Simultaneous:
+                // Check if all expected keys are currently held down
+                if (keyboardController != null)
                 {
-                    allMatch = false;
-                    break;
+                    foreach (string key in expectedKeys)
+                    {
+                        if (!keyboardController.IsKeyPressed(key))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
                 }
-            }
-            return allMatch;
+                return false;
+                
+            default:
+                return false;
         }
-        
-        return false;
-    }
-    
-    private bool CheckSequenceMatch(string keyName)
-    {
-        int currentIndex = pressedKeys.Count;
-        
-        if (currentIndex < expectedKeys.Count && expectedKeys[currentIndex] == keyName)
-        {
-            pressedKeys.Add(keyName);
-            Debug.Log($"[Wall] {gameObject.name} - Sequence progress: {keyName} ({pressedKeys.Count}/{expectedKeys.Count})");
-            
-            return pressedKeys.Count == expectedKeys.Count;
-        }
-        else
-        {
-            if (expectedKeys.Contains(keyName))
-            {
-                Debug.Log($"[Wall] {gameObject.name} - Wrong order! Resetting sequence.");
-            }
-            pressedKeys.Clear();
-            return false;
-        }
-    }
-    
-    private bool CheckSimultaneousMatch(string keyName)
-    {
-        if (keyboardController != null)
-        {
-            int matchCount = 0;
-            foreach (string key in expectedKeys)
-            {
-                if (keyboardController.IsKeyPressed(key))
-                {
-                    matchCount++;
-                }
-            }
-            return matchCount == expectedKeys.Count;
-        }
-        return false;
     }
     
     private void HandleCorrectKey(string keyName)
     {
-        Debug.Log($"<color=green>[Wall] {gameObject.name} - ✓ PERFECT! Key: {keyName}</color>");
+        Debug.Log($"<color=green>[Wall] {gameObject.name} - ✅ PERFECT! Key: {keyName}</color>");
         
-        // Set distance to 0 (perfect)
-        lastKeyDistance = 0;
+        lastDistance = 0;
+        currentNoiseSpeed = speedAtDistance0;
         
-        // Visual feedback
-        ShowCorrectKeyFeedback();
+        // Update shader to perfect (0)
+        UpdateNoiseSpeed(currentNoiseSpeed);
         
-        // Set noise speed to perfect (0)
-        currentNoiseSpeed = perfectNoiseSpeed;
-        UpdateNoiseSpeed();
+        // Show correct feedback
+        ShowCorrectFeedback();
         
-        // Activate heat distortion with perfect clarity
-        if (activateDistortionOnCorrectKey && heatDistortionSphere != null)
+        // Show distortion with perfect clarity
+        if (distortionVisual != null)
         {
-            heatDistortionSphere.SetActive(true);
+            distortionVisual.SetActive(true);
         }
         
-        // Mark as unlocked
+        // Unlock wall
         isUnlocked = true;
         
-        // Trigger events
-        OnCorrectKeyPressed.Invoke(keyName);
+        // Trigger event
         OnWallUnlocked.Invoke();
+        OnKeyDistanceCalculated.Invoke(0);
     }
     
     private void HandleWrongKey(string keyName)
     {
-        // Calculate distance from expected key
+        // Calculate distance
         int distance = CalculateKeyDistance(keyName);
-        lastKeyDistance = distance;
+        lastDistance = distance;
         
         // Calculate noise speed based on distance
-        CalculateNoiseSpeedFromDistance(distance);
+        float noiseSpeed = CalculateNoiseSpeed(distance);
+        currentNoiseSpeed = noiseSpeed;
         
-        // Update the shader
-        UpdateNoiseSpeed();
+        // Update shader
+        UpdateNoiseSpeed(currentNoiseSpeed);
         
-        // Get expected key for display
-        string expectedKeyDisplay = GetExpectedKeyForDisplay();
+        // Show wrong feedback
+        ShowWrongFeedback();
         
-        string distanceInfo = showDistanceInfo ? $" | Distance: {distance} keys away | Noise Speed: {currentNoiseSpeed:F2}" : "";
-        Debug.Log($"<color=red>[Wall] {gameObject.name} - ✗ WRONG KEY: {keyName} (Expected: {expectedKeyDisplay}){distanceInfo}</color>");
-        
-        // Visual feedback
-        ShowWrongKeyFeedback();
-        
-        // Activate heat distortion with noise based on distance
-        if (heatDistortionSphere != null)
+        // Show distortion with noise
+        if (distortionVisual != null)
         {
-            heatDistortionSphere.SetActive(true);
+            distortionVisual.SetActive(true);
         }
         
-        // Trigger events
-        OnWrongKeyPressed.Invoke(keyName);
-        OnDistanceChanged.Invoke(distance);
+        string expectedDisplay = string.Join("+", expectedKeys);
+        Debug.Log($"<color=red>[Wall] {gameObject.name} - ❌ WRONG! Pressed: {keyName} | Expected: {expectedDisplay} | Distance: {distance} | Speed: {noiseSpeed:F2}</color>");
+        
+        // Trigger event
+        OnKeyDistanceCalculated.Invoke(distance);
     }
     
-    /// <summary>
-    /// Calculate the distance between pressed key and expected key(s)
-    /// </summary>
     private int CalculateKeyDistance(string pressedKey)
     {
-        int pressedKeyIndex = keyOrder.IndexOf(pressedKey);
-        
-        if (pressedKeyIndex == -1)
+        int pressedIndex = allKeys.IndexOf(pressedKey);
+        if (pressedIndex == -1)
         {
-            Debug.LogWarning($"[Wall] Key '{pressedKey}' not found in key order list!");
-            return maxDistanceForMaxSpeed;
+            Debug.LogWarning($"[Wall] Key '{pressedKey}' not found in key list!");
+            return 6; // Max distance
         }
         
         int minDistance = int.MaxValue;
         
-        // Calculate distance to each expected key
+        // Calculate distance to closest expected key
         foreach (string expectedKey in expectedKeys)
         {
-            int expectedKeyIndex = keyOrder.IndexOf(expectedKey);
-            
-            if (expectedKeyIndex == -1)
+            int expectedIndex = allKeys.IndexOf(expectedKey);
+            if (expectedIndex == -1)
             {
-                Debug.LogWarning($"[Wall] Expected key '{expectedKey}' not found in key order list!");
+                Debug.LogWarning($"[Wall] Expected key '{expectedKey}' not found in key list!");
                 continue;
             }
             
-            // Calculate absolute distance
-            int distance = Mathf.Abs(pressedKeyIndex - expectedKeyIndex);
-            
-            if (useClosestExpectedKey)
-            {
-                // Use the closest expected key
-                minDistance = Mathf.Min(minDistance, distance);
-            }
-            else
-            {
-                // Use the first expected key (for sequence mode)
-                minDistance = distance;
-                break;
-            }
+            int distance = Mathf.Abs(pressedIndex - expectedIndex);
+            minDistance = Mathf.Min(minDistance, distance);
         }
         
-        if (showDistanceInfo)
+        if (showDebugInfo)
         {
-            Debug.Log($"[Distance] Pressed: {pressedKey} (index {pressedKeyIndex}) | Expected: {string.Join(", ", expectedKeys)} | Distance: {minDistance}");
+            Debug.Log($"[Distance] Pressed: {pressedKey} (idx {pressedIndex}) | Expected: {string.Join("+", expectedKeys)} | Distance: {minDistance}");
         }
         
         return minDistance;
     }
     
-    private string GetExpectedKeyForDisplay()
+    private float CalculateNoiseSpeed(int distance)
     {
-        if (matchMode == KeyMatchMode.Sequence && pressedKeys.Count < expectedKeys.Count)
+        // 0 distance = 0 speed (perfect)
+        // 3 distance = 0.5 speed
+        // 6+ distance = 1.0 speed (max)
+        
+        if (distance == 0)
+            return speedAtDistance0;
+        else if (distance >= 6)
+            return speedAtDistance6;
+        else if (distance == 3)
+            return speedAtDistance3;
+        else if (distance < 3)
         {
-            // For sequence, show the next expected key
-            return expectedKeys[pressedKeys.Count];
+            // Interpolate between 0 and 3
+            float t = distance / 3f;
+            return Mathf.Lerp(speedAtDistance0, speedAtDistance3, t);
         }
-        else
+        else // distance between 3 and 6
         {
-            // Show all expected keys
-            return string.Join(", ", expectedKeys);
-        }
-    }
-    
-    private void CalculateNoiseSpeedFromDistance(int distance)
-    {
-        // Normalize distance (0 to 1)
-        float normalizedDistance = Mathf.Clamp01((float)distance / maxDistanceForMaxSpeed);
-        
-        // Evaluate the curve
-        float curveValue = distanceSpeedCurve.Evaluate(normalizedDistance);
-        
-        // Calculate final noise speed
-        currentNoiseSpeed = Mathf.Lerp(perfectNoiseSpeed, maxNoiseSpeed, curveValue);
-        
-        if (showDistanceInfo)
-        {
-            Debug.Log($"[Noise] Distance: {distance} | Normalized: {normalizedDistance:F2} | Curve: {curveValue:F2} | Speed: {currentNoiseSpeed:F3}");
+            // Interpolate between 3 and 6
+            float t = (distance - 3) / 3f;
+            return Mathf.Lerp(speedAtDistance3, speedAtDistance6, t);
         }
     }
     
-    private void UpdateNoiseSpeed()
+    private void UpdateNoiseSpeed(float speed)
     {
-        if (shaderGraphFXMaterial != null)
+        if (distortionMaterial != null)
         {
-            // Check if the property exists
-            if (shaderGraphFXMaterial.HasProperty(noiseSpeedPropertyName))
+            if (distortionMaterial.HasProperty(noiseSpeedPropertyName))
             {
-                shaderGraphFXMaterial.SetFloat(noiseSpeedPropertyName, currentNoiseSpeed);
+                distortionMaterial.SetFloat(noiseSpeedPropertyName, speed);
                 
-                if (showDistanceInfo)
+                if (showDebugInfo)
                 {
-                    Debug.Log($"<color=cyan>[Shader] {noiseSpeedPropertyName} set to: {currentNoiseSpeed:F3}</color>");
+                    Debug.Log($"<color=cyan>[Shader] {noiseSpeedPropertyName} = {speed:F3}</color>");
                 }
             }
             else
             {
-                Debug.LogWarning($"[Wall] Material doesn't have property '{noiseSpeedPropertyName}'. Available properties:");
-                
-                // List all available properties for debugging
-                Shader shader = shaderGraphFXMaterial.shader;
-                int propertyCount = shader.GetPropertyCount();
-                for (int i = 0; i < propertyCount; i++)
-                {
-                    Debug.Log($"  - {shader.GetPropertyName(i)} ({shader.GetPropertyType(i)})");
-                }
+                Debug.LogWarning($"[Wall] Material doesn't have property '{noiseSpeedPropertyName}'");
             }
-        }
-        else
-        {
-            Debug.LogWarning("[Wall] Shader Graph FX Material not assigned!");
         }
     }
     
-    private void ShowCorrectKeyFeedback()
+    private void ShowCorrectFeedback()
     {
-        if (wallMaterial != null)
+        if (wallRenderer != null)
         {
-            wallMaterial.color = correctKeyColor;
+            wallRenderer.material.color = correctKeyColor;
             feedbackTimer = feedbackDuration;
         }
     }
     
-    private void ShowWrongKeyFeedback()
+    private void ShowWrongFeedback()
     {
-        if (wallMaterial != null)
+        if (wallRenderer != null)
         {
-            wallMaterial.color = wrongKeyColor;
+            wallRenderer.material.color = wrongKeyColor;
             feedbackTimer = feedbackDuration;
         }
     }
     
     private void ResetVisualFeedback()
     {
-        if (wallMaterial != null)
+        if (wallRenderer != null)
         {
             if (isUnlocked)
             {
-                wallMaterial.color = correctKeyColor;
+                wallRenderer.material.color = correctKeyColor;
             }
             else if (!isActive)
             {
-                wallMaterial.color = inactiveWallColor;
+                wallRenderer.material.color = inactiveColor;
             }
             else
             {
-                wallMaterial.color = originalWallColor;
+                wallRenderer.material.color = originalColor;
             }
         }
     }
     
     private void UpdateVisualState()
     {
-        if (wallMaterial != null)
+        if (wallRenderer != null)
         {
             if (!isActive)
             {
-                wallMaterial.color = inactiveWallColor;
+                wallRenderer.material.color = inactiveColor;
             }
             else if (isUnlocked)
             {
-                wallMaterial.color = correctKeyColor;
+                wallRenderer.material.color = correctKeyColor;
             }
             else
             {
-                wallMaterial.color = originalWallColor;
+                wallRenderer.material.color = originalColor;
             }
         }
     }
@@ -515,8 +453,7 @@ public class Wall : MonoBehaviour
         {
             isActive = true;
             UpdateVisualState();
-            OnWallActivated.Invoke();
-            Debug.Log($"<color=yellow>[Wall] {gameObject.name} ACTIVATED - Listening for keys: {string.Join(", ", expectedKeys)}</color>");
+            Debug.Log($"<color=yellow>[Wall] {gameObject.name} ACTIVATED | Keys: [{string.Join("+", expectedKeys)}]</color>");
         }
     }
     
@@ -526,141 +463,57 @@ public class Wall : MonoBehaviour
         {
             isActive = false;
             UpdateVisualState();
-            OnWallDeactivated.Invoke();
-            Debug.Log($"<color=gray>[Wall] {gameObject.name} DEACTIVATED</color>");
-        }
-    }
-    
-    public void SetExpectedKeys(List<string> keys)
-    {
-        expectedKeys = new List<string>(keys);
-        pressedKeys.Clear();
-        Debug.Log($"[Wall] {gameObject.name} - Expected keys set to: {string.Join(", ", expectedKeys)}");
-    }
-    
-    public void AddExpectedKey(string key)
-    {
-        if (!expectedKeys.Contains(key))
-        {
-            expectedKeys.Add(key);
-            Debug.Log($"[Wall] {gameObject.name} - Added expected key: {key}");
-        }
-    }
-    
-    public void RemoveExpectedKey(string key)
-    {
-        if (expectedKeys.Contains(key))
-        {
-            expectedKeys.Remove(key);
-            Debug.Log($"[Wall] {gameObject.name} - Removed expected key: {key}");
+            
+            // Hide distortion when inactive
+            if (distortionVisual != null)
+            {
+                distortionVisual.SetActive(false);
+            }
+            
+            if (showDebugInfo)
+            {
+                Debug.Log($"<color=gray>[Wall] {gameObject.name} DEACTIVATED</color>");
+            }
         }
     }
     
     public void ResetWall()
     {
         isUnlocked = false;
-        pressedKeys.Clear();
-        lastKeyDistance = 0;
-        currentNoiseSpeed = perfectNoiseSpeed;
+        lastDistance = 0;
+        currentNoiseSpeed = 0f;
+        lastKeyPressTime = -999f;
         
-        UpdateNoiseSpeed();
-        ResetVisualFeedback();
+        UpdateNoiseSpeed(0f);
+        UpdateVisualState();
         
-        if (heatDistortionSphere != null)
+        if (distortionVisual != null)
         {
-            heatDistortionSphere.SetActive(false);
+            distortionVisual.SetActive(false);
         }
         
-        Debug.Log($"[Wall] {gameObject.name} has been reset");
+        Debug.Log($"[Wall] {gameObject.name} reset");
     }
     
-    public void SetActive(bool active)
+    public bool IsActive() => isActive;
+    public bool IsUnlocked() => isUnlocked;
+    public int GetLastDistance() => lastDistance;
+    public float GetCurrentNoiseSpeed() => currentNoiseSpeed;
+    public List<string> GetExpectedKeys() => new List<string>(expectedKeys);
+    
+    public void SetExpectedKeys(List<string> keys)
     {
-        if (active)
-        {
-            Activate();
-        }
-        else
-        {
-            Deactivate();
-        }
+        expectedKeys = new List<string>(keys);
     }
     
-    public bool IsActive()
+    public static List<string> GetAllAvailableKeys()
     {
-        return isActive;
+        return new List<string>(allKeys);
     }
     
-    public bool IsUnlocked()
-    {
-        return isUnlocked;
-    }
-    
-    public int GetLastKeyDistance()
-    {
-        return lastKeyDistance;
-    }
-    
-    public float GetCurrentNoiseSpeed()
-    {
-        return currentNoiseSpeed;
-    }
-    
-    public List<string> GetExpectedKeys()
-    {
-        return new List<string>(expectedKeys);
-    }
-    
-    // Get the position of a key in the keyboard layout
-    public static int GetKeyPosition(string keyName)
-    {
-        return keyOrder.IndexOf(keyName);
-    }
-    
-    // Get total number of keys
-    public static int GetTotalKeyCount()
-    {
-        return keyOrder.Count;
-    }
-    
-    // Manually test distance calculation
-    public void TestKeyDistance(string pressedKey)
-    {
-        int distance = CalculateKeyDistance(pressedKey);
-        CalculateNoiseSpeedFromDistance(distance);
-        UpdateNoiseSpeed();
-        
-        Debug.Log($"<color=magenta>[TEST] Pressed: {pressedKey} | Distance: {distance} | Noise Speed: {currentNoiseSpeed:F3}</color>");
-    }
-    
-    // Gizmo to show wall info in editor
     private void OnDrawGizmos()
     {
-        if (isActive && !isUnlocked)
-        {
-            Gizmos.color = Color.yellow;
-            Gizmos.DrawWireSphere(transform.position, 0.5f);
-        }
-        else if (isUnlocked)
-        {
-            Gizmos.color = Color.green;
-            Gizmos.DrawWireSphere(transform.position, 0.5f);
-        }
-        else
-        {
-            Gizmos.color = Color.gray;
-            Gizmos.DrawWireSphere(transform.position, 0.3f);
-        }
-    }
-    
-    // Validate in editor
-    private void OnValidate()
-    {
-        // Ensure max distance is reasonable (max is 13 keys)
-        maxDistanceForMaxSpeed = Mathf.Clamp(maxDistanceForMaxSpeed, 1, 13);
-        
-        // Clamp speeds
-        perfectNoiseSpeed = Mathf.Clamp01(perfectNoiseSpeed);
-        maxNoiseSpeed = Mathf.Clamp01(maxNoiseSpeed);
+        Gizmos.color = isActive ? Color.yellow : (isUnlocked ? Color.green : Color.gray);
+        Gizmos.DrawWireSphere(transform.position, 0.5f);
     }
 }
