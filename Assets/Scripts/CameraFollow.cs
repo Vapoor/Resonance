@@ -14,7 +14,7 @@ public class CameraFollow : MonoBehaviour
     [SerializeField] private bool enableMouseLook = false;
     [SerializeField] private float mouseSensitivity = 2f;
     
-    private float currentRotationY = 0f;
+    private float currentRotationY = 180f;
     
     private void Start()
     {
@@ -57,11 +57,8 @@ public class CameraFollow : MonoBehaviour
         Vector3 smoothedPosition = Vector3.Lerp(transform.position, desiredPosition, smoothSpeed * Time.deltaTime);
         transform.position = smoothedPosition;
         
-        // Look at target
-        if (lookAtTarget)
-        {
-            transform.LookAt(target);
-        }
+        // Always look towards X- (negative X axis)
+        transform.rotation = Quaternion.Euler(0f, -90f, 0f);
     }
     
     // Toggle mouse look at runtime (press Escape)
