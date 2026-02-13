@@ -9,7 +9,6 @@ public class LevelManager : MonoBehaviour
     {
         public string levelName;
         public GameObject terrain;
-        public Material skybox;
     }
     
     [Header("Level Configuration")]
@@ -69,9 +68,8 @@ public class LevelManager : MonoBehaviour
         {
             string terrainInfo = levels[i].terrain != null ? levels[i].terrain.name : "❌ NULL";
             string nameInfo = !string.IsNullOrEmpty(levels[i].levelName) ? levels[i].levelName : "(empty)";
-            string skyboxInfo = levels[i].skybox != null ? levels[i].skybox.name : "NULL";
             
-            Debug.Log($"[LevelManager] Level {i}: Name='{nameInfo}' | Terrain={terrainInfo} | Skybox={skyboxInfo}");
+            Debug.Log($"[LevelManager] Level {i}: Name='{nameInfo}' | Terrain={terrainInfo}");
             
             if (levels[i].terrain == null)
             {
@@ -82,11 +80,6 @@ public class LevelManager : MonoBehaviour
             if (string.IsNullOrEmpty(levels[i].levelName))
             {
                 Debug.LogWarning($"[LevelManager] ⚠️ Level {i} has no name.");
-            }
-            
-            if (levels[i].skybox == null)
-            {
-                Debug.LogWarning($"[LevelManager] ⚠️ Level {i} ({nameInfo}) has no skybox assigned.");
             }
         }
         
@@ -154,21 +147,14 @@ public class LevelManager : MonoBehaviour
             Debug.LogError($"[LevelManager] Level {levelIndex} has NULL terrain!");
         }
         
-        // Change skybox
-        if (currentLevel.skybox != null)
+        // Change environment and skybox
+        if (currentLevel.environmentHDR != null)
         {
-            RenderSettings.skybox = currentLevel.skybox;
-            DynamicGI.UpdateEnvironment();
-        }
-        
-        // Wait one frame to ensure terrain is loaded before respawning
-        StartCoroutine(RespawnAfterFrame());
-        
-        // Refresh walls for new level
-        if (wallManager != null)
-        {
-            // Wait a bit more to ensure terrain colliders are ready
-            StartCoroutine(RefreshWallsAfterDelay(0.1f));
+            // Set ambient mode to skybox
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+            
+            // Wait for terrain and walls to be fully initialized
+            StartCoroutine(RefreshWallsAfterTerrainLoad());
         }
         
         // Trigger event
@@ -187,17 +173,24 @@ public class LevelManager : MonoBehaviour
         RespawnPlayer();
     }
     
-    private System.Collections.IEnumerator RefreshWallsAfterDelay(float delay)
+    private System.Collections.IEnumerator RefreshWallsAfterTerrainLoad()
     {
-        yield return new WaitForSeconds(delay);
+        // Wait for end of current frame
+        yield return new WaitForEndOfFrame();
+        
+        // Wait for next physics update
+        yield return new WaitForFixedUpdate();
+        
+        // Wait one more frame to ensure all GameObjects are properly initialized
+        yield return null;
         
         if (wallManager != null)
         {
-            wallManager.RefreshWalls();
+            wallManager.LoadWallsForCurrentLevel();
             
             if (showDebugInfo)
             {
-                Debug.Log("[LevelManager] Refreshed walls for new level");
+                Debug.Log("[LevelManager] Loaded walls for new level");
             }
         }
     }

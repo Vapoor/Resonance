@@ -57,7 +57,7 @@ Material:
     m_Floats:
     - _NoiseContrast: 0.057
     - _NoiseScale: 0.6
-    - _NoiseSpeed: 0
+    - _NoiseSpeed: 1
     - _QueueControl: 0
     - _QueueOffset: 0
     m_Colors: []
