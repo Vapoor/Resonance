@@ -76,7 +76,7 @@ public class WallManager : MonoBehaviour
         }
         
         // Sort walls by their position (or name, or however you want)
-        walls = walls.OrderBy(w => w.transform.position.z).ToList();
+        walls = walls.OrderByDescending(w => w.transform.position.x).ToList();
         
         Debug.Log($"<color=cyan>[WallManager] Found {walls.Count} wall(s) with tag '{wallTag}'</color>");
     }
