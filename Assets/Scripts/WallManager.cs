@@ -202,13 +202,7 @@ public class WallManager : MonoBehaviour
         else
         {
             Debug.Log("<color=cyan>[WallManager] 🎉 All walls completed! 🎉</color>");
-            
-            // Notify LevelManager to go to next level
-            LevelManager levelManager = FindObjectOfType<LevelManager>();
-            if (levelManager != null)
-            {
-                levelManager.NextLevel();
-            }
+        
         }
     }
     
