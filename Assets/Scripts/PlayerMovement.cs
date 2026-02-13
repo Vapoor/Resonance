@@ -10,6 +10,7 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private bool isGrounded = true;
     
     private Rigidbody rb;
+    private Animator animator;
     private Vector3 moveDirection;
     
     // Public properties for animation system (future use)
@@ -19,6 +20,7 @@ public class PlayerMovement : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody>();
+        animator = GetComponent<Animator>();
         
         if (rb != null)
         {
@@ -39,6 +41,12 @@ public class PlayerMovement : MonoBehaviour
         // Update properties
         Velocity = rb.linearVelocity;
         IsMoving = moveDirection.magnitude > 0.1f;
+        
+        // Update animation
+        if (animator != null)
+        {
+            animator.SetBool("isWalking", IsMoving);
+        }
         
         // Rotate character to face movement direction
         if (IsMoving)
