@@ -25,13 +25,25 @@ public class WallManager : MonoBehaviour
     
     private void Start()
     {
-        LoadWallsForCurrentLevel();
+        // Delay to ensure terrain is loaded
+        Invoke(nameof(LoadWallsForCurrentLevel), 0.1f);
     }
     
     public void LoadWallsForCurrentLevel()
     {
+        if (showDebugInfo)
+        {
+            Debug.Log("[WallManager] Loading walls for current level...");
+        }
+        
         // Find all walls with the "Wall" tag
         FindWallsByTag();
+        
+        if (walls.Count == 0)
+        {
+            Debug.LogWarning("[WallManager] No walls found! Make sure walls have the 'Wall' tag.");
+            return;
+        }
         
         // Unsubscribe from previous events to avoid duplicates
         foreach (Wall wall in walls)
@@ -51,7 +63,10 @@ public class WallManager : MonoBehaviour
             }
         }
         
-        // Deactivate all walls at start
+        // IMPORTANT: Ensure all wall GameObjects are active first
+        EnableAllWallGameObjects();
+        
+        // Deactivate all walls (sets internal state, not GameObject active state)
         DeactivateAllWalls();
         
         // Activate first wall if needed
@@ -70,6 +85,22 @@ public class WallManager : MonoBehaviour
         {
             Debug.Log($"[WallManager] Loaded {walls.Count} walls for current level");
             LogWallStatus();
+        }
+    }
+    
+    private void EnableAllWallGameObjects()
+    {
+        // Make sure all wall GameObjects are active
+        foreach (Wall wall in walls)
+        {
+            if (wall != null && !wall.gameObject.activeSelf)
+            {
+                wall.gameObject.SetActive(true);
+                if (showDebugInfo)
+                {
+                    Debug.Log($"[WallManager] Enabled GameObject: {wall.gameObject.name}");
+                }
+            }
         }
     }
     
@@ -98,10 +129,18 @@ public class WallManager : MonoBehaviour
             }
         }
         
-        // Sort walls by their position (or name, or however you want)
+        // Sort walls by X position (left to right)
+        // Use OrderBy for ascending (left to right), or OrderByDescending for right to left
         walls = walls.OrderByDescending(w => w.transform.position.x).ToList();
         
-        Debug.Log($"<color=cyan>[WallManager] Found {walls.Count} wall(s) with tag '{wallTag}'</color>");
+        if (showDebugInfo)
+        {
+            Debug.Log($"<color=cyan>[WallManager] Found {walls.Count} wall(s) with tag '{wallTag}'</color>");
+            for (int i = 0; i < walls.Count; i++)
+            {
+                Debug.Log($"  {i + 1}. {walls[i].gameObject.name} at X={walls[i].transform.position.x:F2}");
+            }
+        }
     }
     
     private void OnWallUnlocked(Wall wall)
@@ -132,6 +171,17 @@ public class WallManager : MonoBehaviour
         
         // Activate new wall
         currentWallIndex = index;
+        
+        // Make sure GameObject is active before activating wall script
+        if (!walls[currentWallIndex].gameObject.activeSelf)
+        {
+            walls[currentWallIndex].gameObject.SetActive(true);
+            if (showDebugInfo)
+            {
+                Debug.Log($"[WallManager] Enabled GameObject for wall: {walls[currentWallIndex].gameObject.name}");
+            }
+        }
+        
         walls[currentWallIndex].Activate();
         
         if (showDebugInfo)
@@ -152,6 +202,13 @@ public class WallManager : MonoBehaviour
         else
         {
             Debug.Log("<color=cyan>[WallManager] 🎉 All walls completed! 🎉</color>");
+            
+            // Notify LevelManager to go to next level
+            LevelManager levelManager = FindObjectOfType<LevelManager>();
+            if (levelManager != null)
+            {
+                levelManager.NextLevel();
+            }
         }
     }
     
@@ -208,9 +265,10 @@ public class WallManager : MonoBehaviour
         for (int i = 0; i < walls.Count; i++)
         {
             Wall wall = walls[i];
+            string activeState = wall.gameObject.activeSelf ? "GameObject✅" : "GameObject❌";
             string status = wall.IsActive() ? "🟢 ACTIVE" : (wall.IsUnlocked() ? "✅ UNLOCKED" : "⚪ INACTIVE");
             string keys = string.Join("+", wall.GetExpectedKeys());
-            Debug.Log($"  Wall {i + 1}: {wall.gameObject.name} - {status} - Keys: [{keys}]");
+            Debug.Log($"  Wall {i + 1}: {wall.gameObject.name} - {activeState} - {status} - Keys: [{keys}]");
         }
         Debug.Log("==================");
     }

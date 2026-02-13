@@ -11,19 +11,24 @@ public class Wall : MonoBehaviour
     [Header("Key Matching Mode")]
     [SerializeField] private KeyMatchMode matchMode = KeyMatchMode.Any;
     
-    [Header("References")]
-    [SerializeField] private GameObject wallVisual;
-    [SerializeField] private GameObject distortionVisual;
-    [SerializeField] private Material distortionMaterial;
+    [Header("Distortion Wall Linking")]
+    [SerializeField] private string distortionWallSuffix = "_Distortion";
+    [SerializeField] private GameObject linkedDistortionWall;
+    
+    [Header("Unlock Behavior")]
+    [SerializeField] private UnlockBehavior unlockBehavior = UnlockBehavior.Hide;
+    [SerializeField] private float despawnDelay = 1f;
     
     [Header("Cooldown System")]
     [SerializeField] private float keyCooldown = 1f;
     private float lastKeyPressTime = -999f;
     
-    [Header("Distance to Speed Mapping")]
-    [SerializeField] private float speedAtDistance0 = 0f;    // Perfect
+    [Header("Distance to Speed Mapping - INVERTED")]
+    [Tooltip("Close match = HIGH speed (more distortion)")]
+    [SerializeField] private float speedAtDistance0 = 1f;    // Perfect = MAX speed ✅
     [SerializeField] private float speedAtDistance3 = 0.5f;  // Medium
-    [SerializeField] private float speedAtDistance6 = 1f;    // Maximum
+    [SerializeField] private float speedAtDistance6 = 0f;    // Far = NO speed ✅
+
     
     [Header("Shader Settings")]
     [SerializeField] private string noiseSpeedPropertyName = "_NoiseSpeed";
@@ -43,131 +48,105 @@ public class Wall : MonoBehaviour
     
     [Header("Events")]
     public UnityEvent OnWallUnlocked = new UnityEvent();
+    public UnityEvent<string> OnCorrectKeyPressed = new UnityEvent<string>();
+    public UnityEvent<string> OnWrongKeyPressed = new UnityEvent<string>();
     public UnityEvent<int> OnKeyDistanceCalculated = new UnityEvent<int>();
     
     // Private variables
     private Renderer wallRenderer;
     private Renderer distortionRenderer;
+    private Material distortionMaterial;
     private Color originalColor;
     private float feedbackTimer = 0f;
     private int lastDistance = 0;
     private float currentNoiseSpeed = 0f;
     private KeyboardController keyboardController;
     
-    // All 14 keys in physical order (what Unity detects - QWERTY layout)
+    // All 14 keys in physical order
     private static readonly List<string> allKeys = new List<string>
     {
-        "VER",    // 0 - Caps Lock
-        "Q",      // 1 - A key (shows Q on AZERTY)
-        "S",      // 2 - S key
-        "D",      // 3 - D key
-        "F",      // 4 - F key
-        "G",      // 5 - G key
-        "H",      // 6 - H key
-        "J",      // 7 - J key
-        "K",      // 8 - K key
-        "L",      // 9 - L key
-        "M",      // 10 - Semicolon (shows M on AZERTY)
-        "ù",      // 11 - Quote (shows ù on AZERTY)
-        "*",      // 12 - Backslash (shows * on AZERTY)
-        "ENTER"   // 13 - Return
+        "VER", "Q", "S", "D", "F", "G", "H", "J", "K", "L", "M", "ù", "*", "ENTER"
     };
     
     public enum KeyMatchMode
     {
-        Any,            // Any single key from expected keys
-        All,            // All keys must be pressed (any order)
-        Simultaneous    // All keys pressed at the same time (combo)
+        Any,
+        All,
+        Simultaneous
+    }
+    
+    public enum UnlockBehavior
+    {
+        None,
+        Hide,
+        Destroy,
+        HideWithDistortion
     }
     
     private void Awake()
     {
         SetupReferences();
+        FindLinkedDistortionWall();
     }
     
     private void SetupReferences()
     {
-        // Find wall visual
-        if (wallVisual == null)
+        wallRenderer = GetComponent<Renderer>();
+        if (wallRenderer != null)
         {
-            Transform cubeTransform = transform.Find("Cube");
-            if (cubeTransform != null)
-            {
-                wallVisual = cubeTransform.gameObject;
-            }
-        }
-        
-        // Find or create distortion visual
-        if (distortionVisual == null)
-        {
-            Transform distortionTransform = transform.Find("DistortionVisual");
-            if (distortionTransform != null)
-            {
-                distortionVisual = distortionTransform.gameObject;
-            }
-            else
-            {
-                // Create distortion duplicate if it doesn't exist
-                CreateDistortionDuplicate();
-            }
-        }
-        
-        // Get renderers
-        if (wallVisual != null)
-        {
-            wallRenderer = wallVisual.GetComponent<Renderer>();
-            if (wallRenderer != null)
-            {
-                originalColor = wallRenderer.material.color;
-            }
-        }
-        
-        if (distortionVisual != null)
-        {
-            distortionRenderer = distortionVisual.GetComponent<Renderer>();
-            
-            // Apply distortion material
-            if (distortionMaterial != null && distortionRenderer != null)
-            {
-                distortionRenderer.material = distortionMaterial;
-            }
+            originalColor = wallRenderer.material.color;
         }
     }
     
-    private void CreateDistortionDuplicate()
+    private void FindLinkedDistortionWall()
     {
-        if (wallVisual == null) return;
-        
-        // Duplicate the wall visual
-        distortionVisual = Instantiate(wallVisual, transform);
-        distortionVisual.name = "DistortionVisual";
-        
-        // Position it slightly in front
-        distortionVisual.transform.localPosition = wallVisual.transform.localPosition + new Vector3(0, 0, -0.1f);
-        
-        // Apply distortion material
-        Renderer renderer = distortionVisual.GetComponent<Renderer>();
-        if (renderer != null && distortionMaterial != null)
+        if (linkedDistortionWall != null)
         {
-            renderer.material = distortionMaterial;
+            SetupDistortionWall(linkedDistortionWall);
+            return;
         }
         
-        distortionRenderer = renderer;
+        string distortionWallName = gameObject.name + distortionWallSuffix;
+        GameObject foundDistortionWall = GameObject.Find(distortionWallName);
         
-        Debug.Log($"[Wall] Created distortion duplicate for {gameObject.name}");
+        if (foundDistortionWall != null)
+        {
+            linkedDistortionWall = foundDistortionWall;
+            SetupDistortionWall(linkedDistortionWall);
+            Debug.Log($"<color=cyan>[Wall] Found distortion wall: {distortionWallName}</color>");
+        }
+        else
+        {
+            Debug.LogWarning($"[Wall] No distortion wall found with name '{distortionWallName}'.");
+        }
+    }
+    
+    private void SetupDistortionWall(GameObject distortionWall)
+    {
+        if (distortionWall == null) return;
+        
+        distortionRenderer = distortionWall.GetComponent<Renderer>();
+        
+        if (distortionRenderer != null)
+        {
+            distortionMaterial = distortionRenderer.material;
+            
+            if (showDebugInfo)
+            {
+                Debug.Log($"[Wall] Linked to distortion wall: {distortionWall.name}");
+            }
+        }
     }
     
     private void Start()
     {
         keyboardController = FindObjectOfType<KeyboardController>();
         
-        // Hide distortion visual initially
-        if (distortionVisual != null)
+        if (linkedDistortionWall != null)
         {
-            distortionVisual.SetActive(false);
+            linkedDistortionWall.SetActive(false);
         }
         
-        // Set initial noise speed to 0
         UpdateNoiseSpeed(0f);
         UpdateVisualState();
         
@@ -179,7 +158,6 @@ public class Wall : MonoBehaviour
     
     private void Update()
     {
-        // Handle visual feedback timer
         if (feedbackTimer > 0f)
         {
             feedbackTimer -= Time.deltaTime;
@@ -197,7 +175,6 @@ public class Wall : MonoBehaviour
             return;
         }
         
-        // Check cooldown
         if (Time.time - lastKeyPressTime < keyCooldown)
         {
             if (showDebugInfo)
@@ -210,7 +187,6 @@ public class Wall : MonoBehaviour
         
         lastKeyPressTime = Time.time;
         
-        // Check if key matches
         bool isCorrect = CheckKeyMatch(keyName);
         
         if (isCorrect)
@@ -231,11 +207,9 @@ public class Wall : MonoBehaviour
                 return expectedKeys.Contains(keyName);
                 
             case KeyMatchMode.All:
-                // For simplicity, checking if the pressed key is one of the expected
                 return expectedKeys.Contains(keyName);
                 
             case KeyMatchMode.Simultaneous:
-                // Check if all expected keys are currently held down
                 if (keyboardController != null)
                 {
                     foreach (string key in expectedKeys)
@@ -255,119 +229,134 @@ public class Wall : MonoBehaviour
     }
     
     private void HandleCorrectKey(string keyName)
+{
+    Debug.Log($"<color=green>[Wall] {gameObject.name} - ✅ PERFECT! Key: {keyName}</color>");
+    
+    lastDistance = 0;
+    currentNoiseSpeed = speedAtDistance0; // Should be 1.0
+    
+    Debug.Log($"<color=magenta>[DEBUG] Distance=0 → NoiseSpeed={currentNoiseSpeed}</color>");
+    
+    UpdateNoiseSpeed(currentNoiseSpeed);
+    ShowCorrectFeedback();
+    
+    // Show distortion on correct key
+    if (linkedDistortionWall != null)
     {
-        Debug.Log($"<color=green>[Wall] {gameObject.name} - ✅ PERFECT! Key: {keyName}</color>");
-        
-        lastDistance = 0;
-        currentNoiseSpeed = speedAtDistance0;
-        
-        // Update shader to perfect (0)
-        UpdateNoiseSpeed(currentNoiseSpeed);
-        
-        // Show correct feedback
-        ShowCorrectFeedback();
-        
-        // Show distortion with perfect clarity
-        if (distortionVisual != null)
-        {
-            distortionVisual.SetActive(true);
-        }
-        
-        // Unlock wall
-        isUnlocked = true;
-        
-        // Trigger event
-        OnWallUnlocked.Invoke();
-        OnKeyDistanceCalculated.Invoke(0);
+        linkedDistortionWall.SetActive(true);
     }
     
-    private void HandleWrongKey(string keyName)
+    isUnlocked = true;
+    
+    OnCorrectKeyPressed.Invoke(keyName);
+    OnWallUnlocked.Invoke();
+    OnKeyDistanceCalculated.Invoke(0);
+    
+    HandleUnlockBehavior();
+}
+
+private int CalculateKeyDistance(string pressedKey)
+{
+    int pressedIndex = allKeys.IndexOf(pressedKey);
+    if (pressedIndex == -1)
     {
-        // Calculate distance
-        int distance = CalculateKeyDistance(keyName);
-        lastDistance = distance;
+        Debug.LogWarning($"[Wall] Key '{pressedKey}' not found in key list!");
+        return 6; // Max distance
+    }
+    
+    int minDistance = int.MaxValue;
+    
+    // Calculate distance to closest expected key
+    foreach (string expectedKey in expectedKeys)
+    {
+        int expectedIndex = allKeys.IndexOf(expectedKey);
+        if (expectedIndex == -1)
+        {
+            Debug.LogWarning($"[Wall] Expected key '{expectedKey}' not found in key list!");
+            continue;
+        }
         
-        // Calculate noise speed based on distance
+        int distance = Mathf.Abs(pressedIndex - expectedIndex);
+        minDistance = Mathf.Min(minDistance, distance);
+    }
+    
+    if (showDebugInfo)
+    {
+        Debug.Log($"[Distance] Pressed: {pressedKey} (idx {pressedIndex}) | Expected: {string.Join("+", expectedKeys)} | Distance: {minDistance}");
+    }
+    
+    return minDistance;
+}
+    
+private void HandleWrongKey(string keyName)
+{
+    int distance = CalculateKeyDistance(keyName);
+    lastDistance = distance;
+    
+    // Check if distance is too far (6 or more)
+    if (distance >= 6)
+    {
+        // Too far off - hide distortion completely
+        currentNoiseSpeed = 0f;
+        
+        if (linkedDistortionWall != null)
+        {
+            linkedDistortionWall.SetActive(false);
+        }
+        
+        Debug.Log($"<color=red>[Wall] {gameObject.name} - ❌ TOO FAR! Pressed: {keyName} | Distance: {distance} | Distortion HIDDEN</color>");
+    }
+    else
+    {
+        // Close enough (0-5) - show distortion with calculated speed
         float noiseSpeed = CalculateNoiseSpeed(distance);
         currentNoiseSpeed = noiseSpeed;
         
-        // Update shader
         UpdateNoiseSpeed(currentNoiseSpeed);
         
-        // Show wrong feedback
-        ShowWrongFeedback();
-        
-        // Show distortion with noise
-        if (distortionVisual != null)
+        // Show distortion wall
+        if (linkedDistortionWall != null)
         {
-            distortionVisual.SetActive(true);
+            linkedDistortionWall.SetActive(true);
         }
         
         string expectedDisplay = string.Join("+", expectedKeys);
         Debug.Log($"<color=red>[Wall] {gameObject.name} - ❌ WRONG! Pressed: {keyName} | Expected: {expectedDisplay} | Distance: {distance} | Speed: {noiseSpeed:F2}</color>");
         
-        // Trigger event
-        OnKeyDistanceCalculated.Invoke(distance);
+        Debug.Log($"<color=magenta>[DEBUG] Distance={distance} → NoiseSpeed={noiseSpeed:F3} | Distortion VISIBLE</color>");
     }
     
-    private int CalculateKeyDistance(string pressedKey)
-    {
-        int pressedIndex = allKeys.IndexOf(pressedKey);
-        if (pressedIndex == -1)
-        {
-            Debug.LogWarning($"[Wall] Key '{pressedKey}' not found in key list!");
-            return 6; // Max distance
-        }
-        
-        int minDistance = int.MaxValue;
-        
-        // Calculate distance to closest expected key
-        foreach (string expectedKey in expectedKeys)
-        {
-            int expectedIndex = allKeys.IndexOf(expectedKey);
-            if (expectedIndex == -1)
-            {
-                Debug.LogWarning($"[Wall] Expected key '{expectedKey}' not found in key list!");
-                continue;
-            }
-            
-            int distance = Mathf.Abs(pressedIndex - expectedIndex);
-            minDistance = Mathf.Min(minDistance, distance);
-        }
-        
-        if (showDebugInfo)
-        {
-            Debug.Log($"[Distance] Pressed: {pressedKey} (idx {pressedIndex}) | Expected: {string.Join("+", expectedKeys)} | Distance: {minDistance}");
-        }
-        
-        return minDistance;
-    }
+    ShowWrongFeedback();
     
-    private float CalculateNoiseSpeed(int distance)
+    OnWrongKeyPressed.Invoke(keyName);
+    OnKeyDistanceCalculated.Invoke(distance);
+}
+    
+   private float CalculateNoiseSpeed(int distance)
+{
+    // INVERTED: closer = MORE speed, farther = LESS speed
+    // This is only called for distances 0-5
+    // Distance 6+ is handled separately in HandleWrongKey
+    
+    if (distance == 0)
+        return speedAtDistance0;  // 1.0
+    else if (distance >= 5)
+        return 0.1f;  // Very low speed at distance 5
+    else if (distance == 3)
+        return speedAtDistance3;  // 0.5
+    else if (distance < 3)
     {
-        // 0 distance = 0 speed (perfect)
-        // 3 distance = 0.5 speed
-        // 6+ distance = 1.0 speed (max)
-        
-        if (distance == 0)
-            return speedAtDistance0;
-        else if (distance >= 6)
-            return speedAtDistance6;
-        else if (distance == 3)
-            return speedAtDistance3;
-        else if (distance < 3)
-        {
-            // Interpolate between 0 and 3
-            float t = distance / 3f;
-            return Mathf.Lerp(speedAtDistance0, speedAtDistance3, t);
-        }
-        else // distance between 3 and 6
-        {
-            // Interpolate between 3 and 6
-            float t = (distance - 3) / 3f;
-            return Mathf.Lerp(speedAtDistance3, speedAtDistance6, t);
-        }
+        // Interpolate between 0 and 3
+        float t = distance / 3f;
+        return Mathf.Lerp(speedAtDistance0, speedAtDistance3, t);
     }
+    else // distance 4-5
+    {
+        // Interpolate between 3 and 5
+        float t = (distance - 3) / 2f;
+        return Mathf.Lerp(speedAtDistance3, 0.1f, t);
+    }
+}
     
     private void UpdateNoiseSpeed(float speed)
     {
@@ -387,6 +376,61 @@ public class Wall : MonoBehaviour
                 Debug.LogWarning($"[Wall] Material doesn't have property '{noiseSpeedPropertyName}'");
             }
         }
+    }
+    
+    private void HandleUnlockBehavior()
+    {
+        switch (unlockBehavior)
+        {
+            case UnlockBehavior.None:
+                break;
+                
+            case UnlockBehavior.Hide:
+                Invoke(nameof(HideWall), despawnDelay);
+                break;
+                
+            case UnlockBehavior.Destroy:
+                Invoke(nameof(DestroyWall), despawnDelay);
+                break;
+                
+            case UnlockBehavior.HideWithDistortion:
+                Invoke(nameof(HideWallKeepDistortion), despawnDelay);
+                break;
+        }
+    }
+    
+    private void HideWall()
+    {
+        gameObject.SetActive(false);
+        
+        if (linkedDistortionWall != null)
+        {
+            linkedDistortionWall.SetActive(false);
+        }
+        
+        Debug.Log($"<color=gray>[Wall] {gameObject.name} hidden</color>");
+    }
+    
+    private void DestroyWall()
+    {
+        Debug.Log($"<color=gray>[Wall] {gameObject.name} destroyed</color>");
+        
+        if (linkedDistortionWall != null)
+        {
+            Destroy(linkedDistortionWall);
+        }
+        
+        Destroy(gameObject);
+    }
+    
+    private void HideWallKeepDistortion()
+    {
+        if (wallRenderer != null)
+        {
+            wallRenderer.enabled = false;
+        }
+        
+        Debug.Log($"<color=gray>[Wall] {gameObject.name} hidden, distortion remains</color>");
     }
     
     private void ShowCorrectFeedback()
@@ -445,20 +489,11 @@ public class Wall : MonoBehaviour
         }
     }
     
-    // ==================== PUBLIC METHODS ====================
-    
     public void Activate()
     {
         if (!isActive)
         {
             isActive = true;
-            
-            // Reactivate the wall visual
-            if (wallVisual != null)
-            {
-                wallVisual.SetActive(true);
-            }
-            
             UpdateVisualState();
             Debug.Log($"<color=yellow>[Wall] {gameObject.name} ACTIVATED | Keys: [{string.Join("+", expectedKeys)}]</color>");
         }
@@ -471,16 +506,9 @@ public class Wall : MonoBehaviour
             isActive = false;
             UpdateVisualState();
             
-            // Hide distortion when inactive
-            if (distortionVisual != null)
+            if (linkedDistortionWall != null)
             {
-                distortionVisual.SetActive(false);
-            }
-            
-            // Deactivate the entire wall GameObject
-            if (wallVisual != null)
-            {
-                wallVisual.SetActive(false);
+                linkedDistortionWall.SetActive(false);
             }
             
             if (showDebugInfo)
@@ -497,12 +525,20 @@ public class Wall : MonoBehaviour
         currentNoiseSpeed = 0f;
         lastKeyPressTime = -999f;
         
+        CancelInvoke();
+        
+        gameObject.SetActive(true);
+        if (wallRenderer != null)
+        {
+            wallRenderer.enabled = true;
+        }
+        
         UpdateNoiseSpeed(0f);
         UpdateVisualState();
         
-        if (distortionVisual != null)
+        if (linkedDistortionWall != null)
         {
-            distortionVisual.SetActive(false);
+            linkedDistortionWall.SetActive(false);
         }
         
         Debug.Log($"[Wall] {gameObject.name} reset");
@@ -519,6 +555,12 @@ public class Wall : MonoBehaviour
         expectedKeys = new List<string>(keys);
     }
     
+    public void SetLinkedDistortionWall(GameObject distortionWall)
+    {
+        linkedDistortionWall = distortionWall;
+        SetupDistortionWall(distortionWall);
+    }
+    
     public static List<string> GetAllAvailableKeys()
     {
         return new List<string>(allKeys);
@@ -528,5 +570,11 @@ public class Wall : MonoBehaviour
     {
         Gizmos.color = isActive ? Color.yellow : (isUnlocked ? Color.green : Color.gray);
         Gizmos.DrawWireSphere(transform.position, 0.5f);
+        
+        if (linkedDistortionWall != null)
+        {
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawLine(transform.position, linkedDistortionWall.transform.position);
+        }
     }
 }

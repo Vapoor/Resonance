@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Events;
 using System.Collections.Generic;
+using System.Collections;
 
 public class LevelManager : MonoBehaviour
 {
@@ -133,7 +134,7 @@ public class LevelManager : MonoBehaviour
             Debug.Log($"[LevelManager] Current level terrain: {(currentLevel.terrain != null ? currentLevel.terrain.name : "NULL")}");
         }
         
-        // Show new terrain FIRST (before respawning player)
+        // Show new terrain FIRST
         if (currentLevel.terrain != null)
         {
             currentLevel.terrain.SetActive(true);
@@ -147,15 +148,11 @@ public class LevelManager : MonoBehaviour
             Debug.LogError($"[LevelManager] Level {levelIndex} has NULL terrain!");
         }
         
-        // Change environment and skybox
-        if (currentLevel.environmentHDR != null)
-        {
-            // Set ambient mode to skybox
-            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
-            
-            // Wait for terrain and walls to be fully initialized
-            StartCoroutine(RefreshWallsAfterTerrainLoad());
-        }
+        // Respawn player
+        RespawnPlayer();
+        
+        // Refresh walls after terrain is loaded
+        StartCoroutine(RefreshWallsAfterTerrainLoad());
         
         // Trigger event
         OnLevelChanged.Invoke(currentLevelIndex);
@@ -166,32 +163,25 @@ public class LevelManager : MonoBehaviour
         }
     }
     
-    private System.Collections.IEnumerator RespawnAfterFrame()
+    private IEnumerator RefreshWallsAfterTerrainLoad()
     {
-        // Wait for physics to update
-        yield return new WaitForFixedUpdate();
-        RespawnPlayer();
-    }
-    
-    private System.Collections.IEnumerator RefreshWallsAfterTerrainLoad()
-    {
-        // Wait for end of current frame
+        // Wait for terrain to fully activate
         yield return new WaitForEndOfFrame();
-        
-        // Wait for next physics update
         yield return new WaitForFixedUpdate();
         
-        // Wait one more frame to ensure all GameObjects are properly initialized
-        yield return null;
-        
+        // Reload walls for this level
         if (wallManager != null)
         {
             wallManager.LoadWallsForCurrentLevel();
             
             if (showDebugInfo)
             {
-                Debug.Log("[LevelManager] Loaded walls for new level");
+                Debug.Log("[LevelManager] Walls refreshed for new level");
             }
+        }
+        else
+        {
+            Debug.LogWarning("[LevelManager] WallManager not found!");
         }
     }
     
