@@ -6,7 +6,7 @@ public class CameraFollow : MonoBehaviour
     [SerializeField] private Transform target;
     
     [Header("Camera Settings")]
-    [SerializeField] private Vector3 offset = new Vector3(0f, 5f, -7f);
+    [SerializeField] private Vector3 offset = new Vector3(7f, 5f, 0f); // Behind player looking at X-
     [SerializeField] private float smoothSpeed = 10f;
     [SerializeField] private bool lookAtTarget = true;
     
@@ -47,7 +47,7 @@ public class CameraFollow : MonoBehaviour
             
             // Rotate offset around the target
             Quaternion rotation = Quaternion.Euler(0f, currentRotationY, 0f);
-            offset = rotation * new Vector3(0f, 5f, -7f);
+            offset = rotation * new Vector3(7f, 5f, 0f);
         }
         
         // Calculate desired position
