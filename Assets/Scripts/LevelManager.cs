@@ -167,8 +167,8 @@ public class LevelManager : MonoBehaviour
         // Refresh walls for new level
         if (wallManager != null)
         {
-            // Wait a bit more to ensure terrain colliders are ready
-            StartCoroutine(RefreshWallsAfterDelay(0.1f));
+            // Wait for terrain and walls to be fully initialized
+            StartCoroutine(RefreshWallsAfterTerrainLoad());
         }
         
         // Trigger event
@@ -187,17 +187,24 @@ public class LevelManager : MonoBehaviour
         RespawnPlayer();
     }
     
-    private System.Collections.IEnumerator RefreshWallsAfterDelay(float delay)
+    private System.Collections.IEnumerator RefreshWallsAfterTerrainLoad()
     {
-        yield return new WaitForSeconds(delay);
+        // Wait for end of current frame
+        yield return new WaitForEndOfFrame();
+        
+        // Wait for next physics update
+        yield return new WaitForFixedUpdate();
+        
+        // Wait one more frame to ensure all GameObjects are properly initialized
+        yield return null;
         
         if (wallManager != null)
         {
-            wallManager.RefreshWalls();
+            wallManager.LoadWallsForCurrentLevel();
             
             if (showDebugInfo)
             {
-                Debug.Log("[LevelManager] Refreshed walls for new level");
+                Debug.Log("[LevelManager] Loaded walls for new level");
             }
         }
     }
