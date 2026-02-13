@@ -27,6 +27,7 @@ public class Wall : MonoBehaviour
     [Header("Distortion Wall Linking")]
     [SerializeField] private string distortionWallSuffix = "_Distortion";
     [SerializeField] private GameObject linkedDistortionWall;
+    [SerializeField] private bool keepDistortionAfterUnlock = true;
     
     [Header("Correct Input Behavior")]
     [SerializeField] private float greenIndicatorDuration = 0.5f;
@@ -38,9 +39,9 @@ public class Wall : MonoBehaviour
     
     [Header("Distance to Speed Mapping")]
     [Tooltip("Close match = HIGH speed, Far match = LOW speed")]
-    private float speedAtDistance1 = 1f;    // Very close = max speed
-    private float speedAtDistance3 = 0.5f;  // Medium distance = medium speed
-    private float speedAtDistance5 = 0.1f;  // Far = minimal speed
+    private float speedAtDistance1 = 1f;
+    private float speedAtDistance3 = 0.5f;
+    private float speedAtDistance5 = 0.1f;
     
     [Header("Shader Settings")]
     [SerializeField] private string noiseSpeedPropertyName = "_NoiseSpeed";
@@ -55,6 +56,11 @@ public class Wall : MonoBehaviour
     
     [Header("Debug")]
     [SerializeField] private bool showDebugInfo = true;
+
+    [Header("Music After Clear")]
+    [SerializeField] private AudioClip musicAfterClear;
+    [SerializeField] private bool changeMusicOnClear = true;
+    [SerializeField] private float musicCrossfadeDuration = 2f;
     
     [Header("Events")]
     public UnityEvent OnWallUnlocked = new UnityEvent();
@@ -75,6 +81,7 @@ public class Wall : MonoBehaviour
     private AudioSource audioSource;
     private Coroutine hintCoroutine;
     private bool isShowingCorrectSequence = false;
+    private bool playerInAudioRange = false;
     
     // All 14 keys in physical order
     private static readonly List<string> allKeys = new List<string>
@@ -241,14 +248,13 @@ public class Wall : MonoBehaviour
                 return false;
         }
     }
-    
+
     private void HandleCorrectKey(string keyName)
     {
         Debug.Log($"<color=green>[Wall] {gameObject.name} - ✅ PERFECT! Key: {keyName}</color>");
         
         lastDistance = 0;
         
-        // Start green indicator -> max distortion sequence
         StartCoroutine(CorrectInputSequence());
         
         StopAudioHints();
@@ -264,22 +270,7 @@ public class Wall : MonoBehaviour
     {
         isShowingCorrectSequence = true;
         
-        // IMMEDIATELY: Activate distortion wall and set max speed
-        if (linkedDistortionWall != null)
-        {
-            linkedDistortionWall.SetActive(true);
-            Debug.Log($"<color=cyan>[Wall] Distortion wall activated IMMEDIATELY</color>");
-        }
-        
-        currentNoiseSpeed = 1f; // Maximum distortion for correct input
-        UpdateNoiseSpeed(currentNoiseSpeed);
-        
-        if (showDebugInfo)
-        {
-            Debug.Log($"<color=magenta>[Wall] 💥 MAXIMUM DISTORTION! Speed: {currentNoiseSpeed}</color>");
-        }
-        
-        // Step 1: Show green color IMMEDIATELY + Disable colliders + Set albedo
+        // Step 1: Show green color IMMEDIATELY
         if (wallRenderer != null)
         {
             wallRenderer.material.color = correctInputColor;
@@ -307,6 +298,36 @@ public class Wall : MonoBehaviour
         
         yield return new WaitForSeconds(greenIndicatorDuration);
         
+        // Step 2: Activate distortion wall
+        if (linkedDistortionWall != null)
+        {
+            linkedDistortionWall.SetActive(true);
+            Debug.Log($"<color=cyan>[Wall] Distortion wall activated</color>");
+        }
+        
+        // Step 3: Small delay before max distortion
+        yield return new WaitForSeconds(maxDistortionDelay);
+        
+        // Step 4: Set noise speed to maximum (1.0) and KEEP IT THERE
+        currentNoiseSpeed = speedAtDistance1;
+        UpdateNoiseSpeed(currentNoiseSpeed);
+        
+        if (showDebugInfo)
+        {
+            Debug.Log($"<color=magenta>[Wall] 💥 MAXIMUM DISTORTION LOCKED! Speed: {currentNoiseSpeed} - PERMANENT!</color>");
+        }
+        
+        // Step 5: Change background music if configured
+        if (changeMusicOnClear && musicAfterClear != null)
+        {
+            BackgroundMusicManager.Instance.CrossfadeToMusic(musicAfterClear, musicCrossfadeDuration);
+            
+            if (showDebugInfo)
+            {
+                Debug.Log($"<color=cyan>[Wall] 🎵 Crossfading to new music: {musicAfterClear.name}</color>");
+            }
+        }
+        
         isShowingCorrectSequence = false;
     }
     
@@ -317,7 +338,6 @@ public class Wall : MonoBehaviour
         
         if (distance > 5)
         {
-            // Too far - hide distortion, NO red feedback
             currentNoiseSpeed = 0f;
             
             if (linkedDistortionWall != null)
@@ -329,7 +349,6 @@ public class Wall : MonoBehaviour
         }
         else
         {
-            // Close enough - show distortion with calculated speed, NO red feedback
             float noiseSpeed = CalculateNoiseSpeed(distance);
             currentNoiseSpeed = noiseSpeed;
             
@@ -426,7 +445,6 @@ public class Wall : MonoBehaviour
         
         lastDistance = 0;
         
-        // Start green indicator -> max distortion sequence
         StartCoroutine(CorrectInputSequence());
         
         StopAudioHints();
@@ -489,63 +507,44 @@ public class Wall : MonoBehaviour
     
     private float CalculateNoiseSpeed(int distance)
     {
-        // CORRECT LOGIC: Close = HIGH speed, Far = LOW speed
-        // Distance 0: handled separately (correct input = max distortion)
-        // Distance 1: very high speed (1.0)
-        // Distance 2-3: high to medium speed (0.5-1.0)
-        // Distance 4-5: low speed (0.1-0.5)
-        // Distance > 5: no effect (0)
-        
         if (distance == 0)
-            return 1f; // Perfect match = max distortion
+            return 1f;
         else if (distance > 5)
-            return 0f; // No effect
+            return 0f;
         else if (distance == 1)
-            return speedAtDistance1; // Very high speed (1.0)
+            return speedAtDistance1;
         else if (distance <= 3)
         {
-            // Interpolate from high to medium (distance 1 to 3)
-            float t = (distance - 1) / 2f; // 0 at distance 1, 1 at distance 3
-            return Mathf.Lerp(speedAtDistance1, speedAtDistance3, t); // 1.0 → 0.5
+            float t = (distance - 1) / 2f;
+            return Mathf.Lerp(speedAtDistance1, speedAtDistance3, t);
         }
-        else // distance 4-5
+        else
         {
-            // Interpolate from medium to low (distance 3 to 5)
-            float t = (distance - 3) / 2f; // 0 at distance 3, 1 at distance 5
-            return Mathf.Lerp(speedAtDistance3, speedAtDistance5, t); // 0.5 → 0.1
+            float t = (distance - 3) / 2f;
+            return Mathf.Lerp(speedAtDistance3, speedAtDistance5, t);
         }
     }
     
     private float CalculateNoiseSpeedMidi(int distance)
     {
-        // CORRECT LOGIC for MIDI: Close = HIGH speed, Far = LOW speed
-        // Distance 0: perfect match = max distortion
-        // Distance 1-3: very high speed (1.0-0.7)
-        // Distance 6: medium speed (0.5)
-        // Distance 9-11: low speed (0.3-0.1)
-        // Distance >= 12: no effect (0)
-        
         if (distance == 0)
-            return 1f; // Perfect match = max distortion
+            return 1f;
         else if (distance >= 12)
-            return 0f; // No effect
+            return 0f;
         else if (distance <= 3)
         {
-            // Very close: high speed, slightly decreasing
             float t = distance / 3f;
-            return Mathf.Lerp(1f, 0.7f, t); // 1.0 → 0.7
+            return Mathf.Lerp(1f, 0.7f, t);
         }
         else if (distance <= 6)
         {
-            // Close to medium: interpolate to medium speed
             float t = (distance - 3) / 3f;
-            return Mathf.Lerp(0.7f, 0.5f, t); // 0.7 → 0.5
+            return Mathf.Lerp(0.7f, 0.5f, t);
         }
-        else // distance 7-11
+        else
         {
-            // Medium to far: interpolate to low speed
             float t = (distance - 6) / 6f;
-            return Mathf.Lerp(0.5f, 0.1f, t); // 0.5 → 0.1
+            return Mathf.Lerp(0.5f, 0.1f, t);
         }
     }
     
@@ -573,7 +572,7 @@ public class Wall : MonoBehaviour
     
     private IEnumerator PlayAudioHintsRoutine()
     {
-        PlayHintSound();
+        // Don't play hint immediately - wait for player to enter trigger
         
         while (isActive && !isUnlocked)
         {
@@ -581,7 +580,15 @@ public class Wall : MonoBehaviour
             
             if (isActive && !isUnlocked)
             {
-                PlayHintSound();
+                // Only play if player is in range
+                if (playerInAudioRange)
+                {
+                    PlayHintSound();
+                }
+                else if (showDebugInfo)
+                {
+                    Debug.Log($"<color=gray>[Wall] Skipping hint - player not in range</color>");
+                }
             }
         }
     }
@@ -600,7 +607,7 @@ public class Wall : MonoBehaviour
         
         if (showDebugInfo)
         {
-            Debug.Log($"<color=yellow>[Wall] 🎵 Playing hint for note {expectedMidiNote} ({GetNoteName(expectedMidiNote)}) | Pitch: {pitch:F2}</color>");
+            Debug.Log($"<color=yellow>[Wall] �� Playing hint for note {expectedMidiNote} ({GetNoteName(expectedMidiNote)}) | Pitch: {pitch:F2}</color>");
         }
     }
     
@@ -619,6 +626,27 @@ public class Wall : MonoBehaviour
         return $"{noteNames[noteIndex]}{octave}";
     }
     
+    // ==================== EXTERNAL AUDIO RANGE CONTROL ====================
+    
+    /// <summary>
+    /// Called by MusicTriggerZone to enable/disable audio hints
+    /// </summary>
+    public void SetPlayerInAudioRange(bool inRange)
+    {
+        playerInAudioRange = inRange;
+        
+        if (showDebugInfo)
+        {
+            Debug.Log($"<color={(inRange ? "cyan" : "gray")}>[Wall] {gameObject.name} - Player audio range: {inRange}</color>");
+        }
+        
+        // Play hint immediately when player enters (if wall is active)
+        if (inRange && isActive && !isUnlocked && inputMode == InputMode.MIDI && enableAudioHints)
+        {
+            PlayHintSound();
+        }
+    }
+    
     // ==================== VISUAL FEEDBACK ====================
     
     private void UpdateNoiseSpeed(float speed)
@@ -628,6 +656,11 @@ public class Wall : MonoBehaviour
             if (distortionMaterial.HasProperty(noiseSpeedPropertyName))
             {
                 distortionMaterial.SetFloat(noiseSpeedPropertyName, speed);
+                
+                if (showDebugInfo)
+                {
+                    Debug.Log($"<color=cyan>[Shader] {noiseSpeedPropertyName} = {speed:F3}</color>");
+                }
             }
         }
     }
@@ -687,10 +720,22 @@ public class Wall : MonoBehaviour
             UpdateVisualState();
             StopAudioHints();
             
-            // Only hide distortion wall if NOT unlocked
-            if (linkedDistortionWall != null && !isUnlocked)
+            // DON'T disable distortion if wall is unlocked and keepDistortionAfterUnlock is true
+            if (linkedDistortionWall != null && !(isUnlocked && keepDistortionAfterUnlock))
             {
                 linkedDistortionWall.SetActive(false);
+                
+                if (showDebugInfo)
+                {
+                    Debug.Log($"<color=gray>[Wall] Distortion disabled</color>");
+                }
+            }
+            else if (isUnlocked && keepDistortionAfterUnlock)
+            {
+                if (showDebugInfo)
+                {
+                    Debug.Log($"<color=green>[Wall] Distortion KEPT ACTIVE (unlocked wall)</color>");
+                }
             }
             
             if (showDebugInfo)
@@ -707,6 +752,7 @@ public class Wall : MonoBehaviour
         currentNoiseSpeed = 0f;
         lastInputTime = -999f;
         isShowingCorrectSequence = false;
+        playerInAudioRange = false;
         
         StopAllCoroutines();
         CancelInvoke();
@@ -731,17 +777,15 @@ public class Wall : MonoBehaviour
         }
     }
     
-    // ==================== COLLIDER REMOVAL ====================
+    // ==================== COLLIDER MANAGEMENT ====================
     
     [ContextMenu("Remove All Colliders (Including Children)")]
     private void RemoveAllCollidersRecursive()
     {
         int totalRemoved = 0;
         
-        // Remove from this GameObject and all children
         totalRemoved += RemoveCollidersFromObject(gameObject);
         
-        // Remove from distortion wall and its children
         if (linkedDistortionWall != null)
         {
             totalRemoved += RemoveCollidersFromObject(linkedDistortionWall);
@@ -762,7 +806,6 @@ public class Wall : MonoBehaviour
     {
         int count = 0;
         
-        // Remove colliders from this object
         Collider[] colliders = obj.GetComponents<Collider>();
         foreach (Collider col in colliders)
         {
@@ -775,7 +818,6 @@ public class Wall : MonoBehaviour
             count++;
         }
         
-        // Recursively remove from all children
         foreach (Transform child in obj.transform)
         {
             count += RemoveCollidersFromObject(child.gameObject);
@@ -788,7 +830,6 @@ public class Wall : MonoBehaviour
     {
         int count = 0;
         
-        // Get all MeshColliders on this GameObject and children
         MeshCollider[] meshColliders = GetComponentsInChildren<MeshCollider>(true);
         
         foreach (MeshCollider meshCol in meshColliders)
@@ -802,7 +843,6 @@ public class Wall : MonoBehaviour
             }
         }
         
-        // Also disable colliders on linked distortion wall
         if (linkedDistortionWall != null)
         {
             MeshCollider[] distortionColliders = linkedDistortionWall.GetComponentsInChildren<MeshCollider>(true);
@@ -821,6 +861,8 @@ public class Wall : MonoBehaviour
         
         Debug.Log($"<color=green>[Wall] ✅ Disabled {count} MeshCollider(s)</color>");
     }
+    
+    // ==================== GETTERS ====================
     
     public bool IsActive() => isActive;
     public bool IsUnlocked() => isUnlocked;
