@@ -452,6 +452,13 @@ public class Wall : MonoBehaviour
         if (!isActive)
         {
             isActive = true;
+            
+            // Reactivate the wall visual
+            if (wallVisual != null)
+            {
+                wallVisual.SetActive(true);
+            }
+            
             UpdateVisualState();
             Debug.Log($"<color=yellow>[Wall] {gameObject.name} ACTIVATED | Keys: [{string.Join("+", expectedKeys)}]</color>");
         }
@@ -468,6 +475,12 @@ public class Wall : MonoBehaviour
             if (distortionVisual != null)
             {
                 distortionVisual.SetActive(false);
+            }
+            
+            // Deactivate the entire wall GameObject
+            if (wallVisual != null)
+            {
+                wallVisual.SetActive(false);
             }
             
             if (showDebugInfo)
