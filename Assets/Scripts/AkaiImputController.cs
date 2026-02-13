@@ -2,7 +2,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
-using UnityEngine.InputSystem.Utilities;
 
 public class AkaiImputController : MonoBehaviour
 {
@@ -11,11 +10,18 @@ public class AkaiImputController : MonoBehaviour
     public int referenceNote = 60;
 
     [Header("Polyphony")]
-    public int maxVoices = 8; // Nombre de notes simultanées
+    public int maxVoices = 8;
 
     [Header("Pitch Settings")]
     [Range(-24, 24)]
     public int pitchOffset = 0;
+    
+    [Header("Wall Integration")]
+    [SerializeField] private bool sendToWalls = true;
+    [SerializeField] private WallManager wallManager;
+    
+    [Header("Debug")]
+    [SerializeField] private bool showDebugInfo = true;
 
     private List<AudioSource> audioSourcePool;
     private int currentSourceIndex = 0;
@@ -25,7 +31,6 @@ public class AkaiImputController : MonoBehaviour
 
     void Awake()
     {
-        // Créer un pool d'AudioSources pour la polyphonie
         audioSourcePool = new List<AudioSource>();
         for (int i = 0; i < maxVoices; i++)
         {
@@ -33,6 +38,19 @@ public class AkaiImputController : MonoBehaviour
             source.playOnAwake = false;
             source.spatialBlend = 0f;
             audioSourcePool.Add(source);
+        }
+    }
+    
+    void Start()
+    {
+        if (wallManager == null)
+        {
+            wallManager = FindObjectOfType<WallManager>();
+        }
+        
+        if (wallManager == null && sendToWalls)
+        {
+            Debug.LogWarning("[AkaiController] WallManager not found! MIDI input won't affect walls.");
         }
     }
 
@@ -48,9 +66,9 @@ public class AkaiImputController : MonoBehaviour
 
     void Update()
     {
-        if (activeNotes.Count > 0)
+        if (activeNotes.Count > 0 && showDebugInfo)
         {
-            Debug.Log($"Notes actives : {activeNotes.Count} - {string.Join(", ", activeNotes)}");
+            Debug.Log($"[MIDI] Active notes: {activeNotes.Count} - {string.Join(", ", activeNotes)}");
         }
     }
 
@@ -87,39 +105,59 @@ public class AkaiImputController : MonoBehaviour
         }
     }
 
-void OnNotePressed(int note, float velocity)
-{
-    bool isBlack = IsBlackKey(note);
-    string keyType = isBlack ? "Noire" : "Blanche";
-
-    if (noteClip != null)
+    void OnNotePressed(int note, float velocity)
     {
-        AudioSource source = GetNextAudioSource();
-        float pitch = CalculatePitch(note);
+        bool isBlack = IsBlackKey(note);
+        string keyType = isBlack ? "Noire" : "Blanche";
 
-        Debug.Log($"Note ON: {note} ({keyType}) - Vélocité: {velocity:F2} - Pitch: {pitch:F2}");
+        if (showDebugInfo)
+        {
+            string noteName = GetNoteName(note);
+            Debug.Log($"<color=cyan>[MIDI] Note ON: {note} ({noteName}) - Type: {keyType} - Velocity: {velocity:F2}</color>");
+        }
 
-        source.pitch = pitch;
-        source.volume = velocity;
-        source.PlayOneShot(noteClip);
+        // Play audio feedback
+        if (noteClip != null)
+        {
+            AudioSource source = GetNextAudioSource();
+            float pitch = CalculatePitch(note);
+
+            source.pitch = pitch;
+            source.volume = velocity;
+            source.PlayOneShot(noteClip);
+        }
+        
+        // Send to walls
+        if (sendToWalls && wallManager != null)
+        {
+            Wall currentWall = wallManager.GetCurrentWall();
+            if (currentWall != null)
+            {
+                currentWall.OnMidiNotePressed(note, velocity);
+                
+                if (showDebugInfo)
+                {
+                    Debug.Log($"<color=yellow>[MIDI] Sent note {note} to wall: {currentWall.gameObject.name}</color>");
+                }
+            }
+            else if (showDebugInfo)
+            {
+                Debug.LogWarning("[MIDI] No active wall to receive MIDI input!");
+            }
+        }
     }
-    
-    // NEW: Send note to walls
-    MidiWallBridge bridge = FindObjectOfType<MidiWallBridge>();
-    if (bridge != null)
-    {
-        bridge.OnMidiNotePressed(note, velocity);
-    }
-}
 
     void OnNoteReleased(int note)
     {
-        Debug.Log($"Note OFF: {note}");
+        if (showDebugInfo)
+        {
+            string noteName = GetNoteName(note);
+            Debug.Log($"<color=gray>[MIDI] Note OFF: {note} ({noteName})</color>");
+        }
     }
 
     AudioSource GetNextAudioSource()
     {
-        // Rotation circulaire dans le pool
         AudioSource source = audioSourcePool[currentSourceIndex];
         currentSourceIndex = (currentSourceIndex + 1) % maxVoices;
         return source;
@@ -136,5 +174,13 @@ void OnNotePressed(int note, float velocity)
     {
         int n = note % 12;
         return n == 1 || n == 3 || n == 6 || n == 8 || n == 10;
+    }
+    
+    string GetNoteName(int midiNote)
+    {
+        string[] noteNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        int octave = (midiNote / 12) - 1;
+        int noteIndex = midiNote % 12;
+        return $"{noteNames[noteIndex]}{octave}";
     }
 }
