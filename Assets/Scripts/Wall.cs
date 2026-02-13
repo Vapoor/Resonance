@@ -36,11 +36,11 @@ public class Wall : MonoBehaviour
     [SerializeField] private float inputCooldown = 0.5f;
     private float lastInputTime = -999f;
     
-    [Header("Distance to Speed Mapping - INVERTED")]
-    [Tooltip("Close match = HIGH speed (more distortion)")]
-    [SerializeField] private float speedAtDistance0 = 1f;
-    [SerializeField] private float speedAtDistance3 = 0.5f;
-    [SerializeField] private float speedAtDistance6 = 0f;
+    [Header("Distance to Speed Mapping")]
+    [Tooltip("Close match = HIGH speed, Far match = LOW speed")]
+    private float speedAtDistance1 = 1f;    // Very close = max speed
+    private float speedAtDistance3 = 0.5f;  // Medium distance = medium speed
+    private float speedAtDistance5 = 0.1f;  // Far = minimal speed
     
     [Header("Shader Settings")]
     [SerializeField] private string noiseSpeedPropertyName = "_NoiseSpeed";
@@ -264,12 +264,41 @@ public class Wall : MonoBehaviour
     {
         isShowingCorrectSequence = true;
         
-        // Step 1: Show green color IMMEDIATELY
+        // IMMEDIATELY: Activate distortion wall and set max speed
+        if (linkedDistortionWall != null)
+        {
+            linkedDistortionWall.SetActive(true);
+            Debug.Log($"<color=cyan>[Wall] Distortion wall activated IMMEDIATELY</color>");
+        }
+        
+        currentNoiseSpeed = 1f; // Maximum distortion for correct input
+        UpdateNoiseSpeed(currentNoiseSpeed);
+        
+        if (showDebugInfo)
+        {
+            Debug.Log($"<color=magenta>[Wall] 💥 MAXIMUM DISTORTION! Speed: {currentNoiseSpeed}</color>");
+        }
+        
+        // Step 1: Show green color IMMEDIATELY + Disable colliders + Set albedo
         if (wallRenderer != null)
         {
             wallRenderer.material.color = correctInputColor;
+            
+            // Set albedo to green
+            if (wallRenderer.material.HasProperty("_BaseColor"))
+            {
+                wallRenderer.material.SetColor("_BaseColor", correctInputColor);
+            }
+            else if (wallRenderer.material.HasProperty("_Color"))
+            {
+                wallRenderer.material.SetColor("_Color", correctInputColor);
+            }
+            
             Debug.Log($"<color=green>[Wall] 🟢 GREEN COLOR ACTIVATED!</color>");
         }
+        
+        // Disable all mesh colliders
+        DisableAllMeshColliders();
         
         if (showDebugInfo)
         {
@@ -277,25 +306,6 @@ public class Wall : MonoBehaviour
         }
         
         yield return new WaitForSeconds(greenIndicatorDuration);
-        
-        // Step 2: Activate distortion wall
-        if (linkedDistortionWall != null)
-        {
-            linkedDistortionWall.SetActive(true);
-            Debug.Log($"<color=cyan>[Wall] Distortion wall activated</color>");
-        }
-        
-        // Step 3: Small delay before max distortion
-        yield return new WaitForSeconds(maxDistortionDelay);
-        
-        // Step 4: Set noise speed to maximum (1.0)
-        currentNoiseSpeed = speedAtDistance0;
-        UpdateNoiseSpeed(currentNoiseSpeed);
-        
-        if (showDebugInfo)
-        {
-            Debug.Log($"<color=magenta>[Wall] 💥 MAXIMUM DISTORTION! Speed: {currentNoiseSpeed}</color>");
-        }
         
         isShowingCorrectSequence = false;
     }
@@ -305,7 +315,7 @@ public class Wall : MonoBehaviour
         int distance = CalculateKeyDistance(keyName);
         lastDistance = distance;
         
-        if (distance >= 6)
+        if (distance > 5)
         {
             // Too far - hide distortion, NO red feedback
             currentNoiseSpeed = 0f;
@@ -479,41 +489,63 @@ public class Wall : MonoBehaviour
     
     private float CalculateNoiseSpeed(int distance)
     {
+        // CORRECT LOGIC: Close = HIGH speed, Far = LOW speed
+        // Distance 0: handled separately (correct input = max distortion)
+        // Distance 1: very high speed (1.0)
+        // Distance 2-3: high to medium speed (0.5-1.0)
+        // Distance 4-5: low speed (0.1-0.5)
+        // Distance > 5: no effect (0)
+        
         if (distance == 0)
-            return speedAtDistance0;
-        else if (distance >= 5)
-            return 0.1f;
-        else if (distance == 3)
-            return speedAtDistance3;
-        else if (distance < 3)
+            return 1f; // Perfect match = max distortion
+        else if (distance > 5)
+            return 0f; // No effect
+        else if (distance == 1)
+            return speedAtDistance1; // Very high speed (1.0)
+        else if (distance <= 3)
         {
-            float t = distance / 3f;
-            return Mathf.Lerp(speedAtDistance0, speedAtDistance3, t);
+            // Interpolate from high to medium (distance 1 to 3)
+            float t = (distance - 1) / 2f; // 0 at distance 1, 1 at distance 3
+            return Mathf.Lerp(speedAtDistance1, speedAtDistance3, t); // 1.0 → 0.5
         }
-        else
+        else // distance 4-5
         {
-            float t = (distance - 3) / 2f;
-            return Mathf.Lerp(speedAtDistance3, 0.1f, t);
+            // Interpolate from medium to low (distance 3 to 5)
+            float t = (distance - 3) / 2f; // 0 at distance 3, 1 at distance 5
+            return Mathf.Lerp(speedAtDistance3, speedAtDistance5, t); // 0.5 → 0.1
         }
     }
     
     private float CalculateNoiseSpeedMidi(int distance)
     {
+        // CORRECT LOGIC for MIDI: Close = HIGH speed, Far = LOW speed
+        // Distance 0: perfect match = max distortion
+        // Distance 1-3: very high speed (1.0-0.7)
+        // Distance 6: medium speed (0.5)
+        // Distance 9-11: low speed (0.3-0.1)
+        // Distance >= 12: no effect (0)
+        
         if (distance == 0)
-            return speedAtDistance0;
+            return 1f; // Perfect match = max distortion
         else if (distance >= 12)
-            return 0f;
-        else if (distance == 6)
-            return speedAtDistance3;
-        else if (distance < 6)
+            return 0f; // No effect
+        else if (distance <= 3)
         {
-            float t = distance / 6f;
-            return Mathf.Lerp(speedAtDistance0, speedAtDistance3, t);
+            // Very close: high speed, slightly decreasing
+            float t = distance / 3f;
+            return Mathf.Lerp(1f, 0.7f, t); // 1.0 → 0.7
         }
-        else
+        else if (distance <= 6)
         {
+            // Close to medium: interpolate to medium speed
+            float t = (distance - 3) / 3f;
+            return Mathf.Lerp(0.7f, 0.5f, t); // 0.7 → 0.5
+        }
+        else // distance 7-11
+        {
+            // Medium to far: interpolate to low speed
             float t = (distance - 6) / 6f;
-            return Mathf.Lerp(speedAtDistance3, 0f, t);
+            return Mathf.Lerp(0.5f, 0.1f, t); // 0.5 → 0.1
         }
     }
     
@@ -655,7 +687,8 @@ public class Wall : MonoBehaviour
             UpdateVisualState();
             StopAudioHints();
             
-            if (linkedDistortionWall != null)
+            // Only hide distortion wall if NOT unlocked
+            if (linkedDistortionWall != null && !isUnlocked)
             {
                 linkedDistortionWall.SetActive(false);
             }
@@ -749,6 +782,44 @@ public class Wall : MonoBehaviour
         }
         
         return count;
+    }
+    
+    private void DisableAllMeshColliders()
+    {
+        int count = 0;
+        
+        // Get all MeshColliders on this GameObject and children
+        MeshCollider[] meshColliders = GetComponentsInChildren<MeshCollider>(true);
+        
+        foreach (MeshCollider meshCol in meshColliders)
+        {
+            meshCol.enabled = false;
+            count++;
+            
+            if (showDebugInfo)
+            {
+                Debug.Log($"<color=cyan>[Wall] Disabled MeshCollider on {meshCol.gameObject.name}</color>");
+            }
+        }
+        
+        // Also disable colliders on linked distortion wall
+        if (linkedDistortionWall != null)
+        {
+            MeshCollider[] distortionColliders = linkedDistortionWall.GetComponentsInChildren<MeshCollider>(true);
+            
+            foreach (MeshCollider meshCol in distortionColliders)
+            {
+                meshCol.enabled = false;
+                count++;
+                
+                if (showDebugInfo)
+                {
+                    Debug.Log($"<color=cyan>[Wall] Disabled MeshCollider on distortion wall: {meshCol.gameObject.name}</color>");
+                }
+            }
+        }
+        
+        Debug.Log($"<color=green>[Wall] ✅ Disabled {count} MeshCollider(s)</color>");
     }
     
     public bool IsActive() => isActive;
