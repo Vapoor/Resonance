@@ -1,16 +1,20 @@
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 public class WallManager : MonoBehaviour
 {
-    [Header("Wall Management")]
-    [SerializeField] private List<Wall> walls = new List<Wall>();
+    [Header("Wall Detection")]
+    [SerializeField] private string wallTag = "Wall";
+    
+    [Header("Settings")]
     [SerializeField] private bool autoActivateFirstWall = true;
     [SerializeField] private bool autoAdvanceOnUnlock = true;
     
     [Header("Debug")]
     [SerializeField] private bool showDebugInfo = true;
     
+    private List<Wall> walls = new List<Wall>();
     private int currentWallIndex = -1;
     private KeyboardController keyboardController;
     
@@ -18,15 +22,8 @@ public class WallManager : MonoBehaviour
     {
         keyboardController = FindObjectOfType<KeyboardController>();
         
-        // Find all walls if list is empty
-        if (walls.Count == 0)
-        {
-            walls = new List<Wall>(FindObjectsOfType<Wall>());
-            Debug.Log($"[WallManager] Auto-found {walls.Count} walls");
-        }
-        
-        // Deactivate all walls at start
-        DeactivateAllWalls();
+        // Find all walls with the "Wall" tag
+        FindWallsByTag();
         
         // Subscribe to wall unlock events
         foreach (Wall wall in walls)
@@ -37,6 +34,9 @@ public class WallManager : MonoBehaviour
             }
         }
         
+        // Deactivate all walls at start
+        DeactivateAllWalls();
+        
         // Activate first wall if needed
         if (autoActivateFirstWall && walls.Count > 0)
         {
@@ -46,12 +46,45 @@ public class WallManager : MonoBehaviour
         if (showDebugInfo)
         {
             Debug.Log($"[WallManager] Initialized with {walls.Count} walls");
+            LogWallStatus();
         }
+    }
+    
+    private void FindWallsByTag()
+    {
+        walls.Clear();
+        
+        GameObject[] wallObjects = GameObject.FindGameObjectsWithTag(wallTag);
+        
+        if (wallObjects.Length == 0)
+        {
+            Debug.LogWarning($"[WallManager] No GameObjects found with tag '{wallTag}'!");
+            return;
+        }
+        
+        foreach (GameObject wallObj in wallObjects)
+        {
+            Wall wall = wallObj.GetComponent<Wall>();
+            if (wall != null)
+            {
+                walls.Add(wall);
+            }
+            else
+            {
+                Debug.LogWarning($"[WallManager] GameObject '{wallObj.name}' has '{wallTag}' tag but no Wall component!");
+            }
+        }
+        
+        // Sort walls by their position (or name, or however you want)
+        walls = walls.OrderBy(w => w.transform.position.z).ToList();
+        
+        Debug.Log($"<color=cyan>[WallManager] Found {walls.Count} wall(s) with tag '{wallTag}'</color>");
     }
     
     private void OnWallUnlocked(Wall wall)
     {
-        Debug.Log($"<color=green>[WallManager] Wall unlocked: {wall.gameObject.name}</color>");
+        int wallIndex = walls.IndexOf(wall);
+        Debug.Log($"<color=green>[WallManager] Wall {wallIndex + 1}/{walls.Count} unlocked: {wall.gameObject.name}</color>");
         
         if (autoAdvanceOnUnlock)
         {
@@ -81,6 +114,7 @@ public class WallManager : MonoBehaviour
         if (showDebugInfo)
         {
             Debug.Log($"<color=yellow>[WallManager] Activated Wall {currentWallIndex + 1}/{walls.Count}: {walls[currentWallIndex].gameObject.name}</color>");
+            LogWallStatus();
         }
     }
     
@@ -94,7 +128,7 @@ public class WallManager : MonoBehaviour
         }
         else
         {
-            Debug.Log("<color=cyan>[WallManager] All walls completed! 🎉</color>");
+            Debug.Log("<color=cyan>[WallManager] 🎉 All walls completed! 🎉</color>");
         }
     }
     
@@ -140,6 +174,30 @@ public class WallManager : MonoBehaviour
         Debug.Log("[WallManager] All walls reset");
     }
     
+    public void RefreshWalls()
+    {
+        int previousIndex = currentWallIndex;
+        FindWallsByTag();
+        
+        if (previousIndex >= 0 && previousIndex < walls.Count)
+        {
+            ActivateWall(previousIndex);
+        }
+    }
+    
+    private void LogWallStatus()
+    {
+        Debug.Log("=== WALL STATUS ===");
+        for (int i = 0; i < walls.Count; i++)
+        {
+            Wall wall = walls[i];
+            string status = wall.IsActive() ? "🟢 ACTIVE" : (wall.IsUnlocked() ? "✅ UNLOCKED" : "⚪ INACTIVE");
+            string keys = string.Join("+", wall.GetExpectedKeys());
+            Debug.Log($"  Wall {i + 1}: {wall.gameObject.name} - {status} - Keys: [{keys}]");
+        }
+        Debug.Log("==================");
+    }
+    
     public Wall GetCurrentWall()
     {
         if (currentWallIndex >= 0 && currentWallIndex < walls.Count)
@@ -159,29 +217,8 @@ public class WallManager : MonoBehaviour
         return walls.Count;
     }
     
-    // Add a wall to the manager
-    public void AddWall(Wall wall)
+    public List<Wall> GetAllWalls()
     {
-        if (!walls.Contains(wall))
-        {
-            walls.Add(wall);
-            wall.OnWallUnlocked.AddListener(() => OnWallUnlocked(wall));
-        }
-    }
-    
-    // UI Testing methods (can be called from buttons)
-    public void TestNextWall()
-    {
-        ActivateNextWall();
-    }
-    
-    public void TestPreviousWall()
-    {
-        ActivatePreviousWall();
-    }
-    
-    public void TestReset()
-    {
-        ResetAllWalls();
+        return new List<Wall>(walls);
     }
 }
