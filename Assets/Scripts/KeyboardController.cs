@@ -31,8 +31,8 @@ public class KeyboardController : MonoBehaviour
     
     private void Start()
     {
-        // Find all walls in the scene
-        RefreshWalls();
+        // Don't refresh walls here - let WallManager do it after loading walls
+        // RefreshWalls();
     }
     
     private void InitializeKeyMappings()

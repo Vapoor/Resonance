@@ -18,12 +18,29 @@ public class WallManager : MonoBehaviour
     private int currentWallIndex = -1;
     private KeyboardController keyboardController;
     
-    private void Start()
+    private void Awake()
     {
         keyboardController = FindObjectOfType<KeyboardController>();
-        
+    }
+    
+    private void Start()
+    {
+        LoadWallsForCurrentLevel();
+    }
+    
+    public void LoadWallsForCurrentLevel()
+    {
         // Find all walls with the "Wall" tag
         FindWallsByTag();
+        
+        // Unsubscribe from previous events to avoid duplicates
+        foreach (Wall wall in walls)
+        {
+            if (wall != null)
+            {
+                wall.OnWallUnlocked.RemoveAllListeners();
+            }
+        }
         
         // Subscribe to wall unlock events
         foreach (Wall wall in walls)
@@ -43,9 +60,15 @@ public class WallManager : MonoBehaviour
             ActivateWall(0);
         }
         
+        // Notify KeyboardController to refresh its wall list
+        if (keyboardController != null)
+        {
+            keyboardController.RefreshWalls();
+        }
+        
         if (showDebugInfo)
         {
-            Debug.Log($"[WallManager] Initialized with {walls.Count} walls");
+            Debug.Log($"[WallManager] Loaded {walls.Count} walls for current level");
             LogWallStatus();
         }
     }
@@ -76,7 +99,7 @@ public class WallManager : MonoBehaviour
         }
         
         // Sort walls by their position (or name, or however you want)
-        walls = walls.OrderBy(w => w.transform.position.z).ToList();
+        walls = walls.OrderByDescending(w => w.transform.position.x).ToList();
         
         Debug.Log($"<color=cyan>[WallManager] Found {walls.Count} wall(s) with tag '{wallTag}'</color>");
     }
@@ -176,13 +199,7 @@ public class WallManager : MonoBehaviour
     
     public void RefreshWalls()
     {
-        int previousIndex = currentWallIndex;
-        FindWallsByTag();
-        
-        if (previousIndex >= 0 && previousIndex < walls.Count)
-        {
-            ActivateWall(previousIndex);
-        }
+        LoadWallsForCurrentLevel();
     }
     
     private void LogWallStatus()
