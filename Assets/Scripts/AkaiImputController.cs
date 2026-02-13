@@ -87,26 +87,30 @@ public class AkaiImputController : MonoBehaviour
         }
     }
 
-    void OnNotePressed(int note, float velocity)
+void OnNotePressed(int note, float velocity)
+{
+    bool isBlack = IsBlackKey(note);
+    string keyType = isBlack ? "Noire" : "Blanche";
+
+    if (noteClip != null)
     {
-        bool isBlack = IsBlackKey(note);
-        string keyType = isBlack ? "Noire" : "Blanche";
+        AudioSource source = GetNextAudioSource();
+        float pitch = CalculatePitch(note);
 
-        if (noteClip != null)
-        {
-            // Obtenir un AudioSource disponible du pool
-            AudioSource source = GetNextAudioSource();
+        Debug.Log($"Note ON: {note} ({keyType}) - Vélocité: {velocity:F2} - Pitch: {pitch:F2}");
 
-            // Calculer et appliquer le pitch
-            float pitch = CalculatePitch(note);
-
-            Debug.Log($"Note ON: {note} ({keyType}) - Vélocité: {velocity:F2} - Pitch: {pitch:F2}");
-
-            source.pitch = pitch;
-            source.volume = velocity;
-            source.PlayOneShot(noteClip);
-        }
+        source.pitch = pitch;
+        source.volume = velocity;
+        source.PlayOneShot(noteClip);
     }
+    
+    // NEW: Send note to walls
+    MidiWallBridge bridge = FindObjectOfType<MidiWallBridge>();
+    if (bridge != null)
+    {
+        bridge.OnMidiNotePressed(note, velocity);
+    }
+}
 
     void OnNoteReleased(int note)
     {
